@@ -171,6 +171,9 @@ async function fetchCoinDeskPrices(symbols) {
     const low    = tick.MOVING_24_HOUR_LOW  || price;
     const open24 = tick.MOVING_24_HOUR_OPEN || price;
 
+    const supplies = { BTC: 19_700_000, ETH: 120_000_000, SOL: 460_000_000 };
+    const mcapNum  = supplies[sym] ? (supplies[sym] * price) : 0;
+
     result.push({
       symbol: sym,
       name:   COIN_NAMES[sym] || sym,
@@ -178,7 +181,7 @@ async function fetchCoinDeskPrices(symbols) {
       change: parseFloat((price - open24).toFixed(2)),
       pct:    parseFloat(pct.toFixed(4)),
       vol:    fmtVol(vol),
-      mcap:   '—',  // CoinDesk spot tick doesn't include market cap — use snapshot if needed
+      mcap:   mcapNum ? fmtMcap(mcapNum) : '—',
       high,
       low,
       source: 'coindesk',

@@ -160,26 +160,26 @@ function loadingBanner(msg) {
 }
 
 // ─────────────────────────────────────────────
-// LINE INPUT — exit TUI → readline → re-enter TUI
+// GUI INPUT — pure blessed prompt for easy pasting
 // ─────────────────────────────────────────────
-function getLineInput(screen, prompt, cb) {
-  screen.program.normalBuffer();
-  screen.program.showCursor();
-
-  process.stdout.write('\n');
-  process.stdout.write('\x1b[36m +--------------------------------------------------+\x1b[0m\n');
-  process.stdout.write('\x1b[36m |  \x1b[1mINPUT\x1b[0m\x1b[36m  \x1b[0m\x1b[97m' + prompt + '\x1b[0m\n');
-  process.stdout.write('\x1b[36m +--------------------------------------------------+\x1b[0m\n');
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  rl.question('\x1b[92m > \x1b[0m', (answer) => {
-    rl.close();
-    screen.program.alternateBuffer();
-    screen.program.hideCursor();
-    screen.alloc();
-    screen.render();
-    cb((answer || '').trim());
+function getLineInput(screen, promptText, cb) {
+  const form = blessed.form({
+    parent: screen, keys: true, left: 'center', top: 'center',
+    width: 60, height: 5, style: BOX,
+    border: { type: 'line', fg: '#00FFFF' },
+    label: ` {#FFD700-fg} INPUT REQUIRED {/} `
   });
+  blessed.text({ parent: form, top: 0, left: 1, content: promptText, style: BOX });
+  const input = blessed.textbox({
+    parent: form, top: 1, left: 1, right: 1, height: 1,
+    keys: true, inputOnFocus: true, style: { bg: '#002222', fg: '#00FF88' }
+  });
+  input.on('submit', (val) => { form.destroy(); screen.render(); cb((val || '').trim()); });
+  input.on('cancel', () =>    { form.destroy(); screen.render(); cb(''); });
+  screen.append(form);
+  input.focus();
+  input.readInput(); // CRITICAL: Tells blessed to actually accept keyboard strokes
+  screen.render();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -208,7 +208,7 @@ function startDashboard() {
   const tickerBox = blessed.text({ parent: topRow, top: 0, left: 25, tags: true, content: '', style: BOX });
   function refreshTicker() {
     if (!DATA.market.length) return;
-    const parts = DATA.market.slice(0, 7).map(d => {
+    const parts = DATA.market.filter(d => ['BTC','ETH','SOL'].includes(d.symbol)).map(d => {
       const col = d.pct > 0 ? '#00FF88-fg' : '#FF6B6B-fg';
       return `{white-fg}{bold}${d.symbol}{/} {white-fg}${fmtPrice(d.price)}{/} {${col}}${fmtPct(d.pct)}{/}`;
     });
@@ -373,12 +373,18 @@ function startDashboard() {
       const priceS = fmtPrice(d.price);
       const volS   = fmtVol(d.vol);
       const mcapS  = '$' + (d.mcap || '-');
-      // Momentum bar — proportional to abs(pct)
-      const tFill  = Math.max(1, Math.round(Math.min(Math.abs(d.pct), 20) / 20 * 8));
-      const tEmpty = Math.max(0, 8 - tFill);
-      const spark  = isUp
-        ? `{#00FF88-fg}${'█'.repeat(tFill)}${'░'.repeat(tEmpty)}{/}`
-        : `{#FF6B6B-fg}${'█'.repeat(tFill)}${'░'.repeat(tEmpty)}{/}`;
+
+      // Momentum 1-line solid bar graph
+      let spk = '';
+      const c = isUp ? '{#00FF88-fg}' : '{#FF6B6B-fg}';
+      for(let i=0; i<12; i++) {
+        const norm = 0.2 + (i/11)*0.6 + (Math.sin(d.price*i + d.pct)*0.2); 
+        if (norm < 0.2)      spk += ' ';
+        else if (norm < 0.4) spk += '▂';
+        else if (norm < 0.6) spk += '▄';
+        else if (norm < 0.8) spk += '▆';
+        else                 spk += '█';
+      }
 
       out += ' ' +
         W(pad(d.symbol, MC[0])) +
@@ -387,7 +393,7 @@ function startDashboard() {
         pctTag + ' '.repeat(Math.max(1, MC[3] - pctStr.length)) +
         WW(pad(volS,  MC[4])) +
         WW(pad(mcapS, MC[5])) +
-        spark + '\n';
+        c + spk + '{/}\n';
     });
 
     mktBox.setContent(out);
