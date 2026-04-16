@@ -1,3 +1,6 @@
+// Load .env FIRST — before any other require() reads process.env
+require('dotenv').config({ path: require('path').resolve(__dirname, '.env') });
+
 const { program } = require('commander');
 const chalk = require('chalk');
 const clear = require('clear');

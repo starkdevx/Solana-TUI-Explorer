@@ -1,828 +1,837 @@
 // =============================================
-// SOLANA TERMINAL CLI — Full TUI Dashboard
-// F1 MARKET  F2 PRICE  F3 WALLET  F4 TOKEN
-// F5 NEWS    F6 LIVE   F7 ALERTS  F8 NETWORK
+// SOLANA TERMINAL CLI  ·  v4
+// Theme: green/cyan on black (classic hacker terminal)
+// Charts: solid-fill bar chart matching reference image
 // =============================================
 
 const blessed = require('blessed');
 const contrib  = require('blessed-contrib');
 const chalk    = require('chalk');
-const DATA     = require('../data');
-const NS       = DATA.networkStats;
+const readline = require('readline');
+chalk.level = 3;
 
-// ── Formatters ───────────────────────────────
+const { DATA, loadMarketData, loadNetworkData, loadWalletData, loadTokenData } = require('../data');
+const CFG = require('../config');
+
+// ─────────────────────────────────────────────
+// COLOR PALETTE  (green/cyan theme)
+//   G   = neon green   — positive / key values
+//   C   = cyan         — labels, axes, info
+//   W   = white bold   — primary data
+//   WW  = white        — secondary data
+//   Y   = gold/yellow  — accent headers, stats
+//   DN  = soft red     — negative / down
+//   GRY = light gray   — dim text (always visible)
+// ─────────────────────────────────────────────
+const G    = s => `{#00FF88-fg}${String(s)}{/}`;
+const C    = s => `{#00FFFF-fg}${String(s)}{/}`;
+const W    = s => `{white-fg}{bold}${String(s)}{/}`;
+const WW   = s => `{white-fg}${String(s)}{/}`;
+const Y    = s => `{#FFD700-fg}${String(s)}{/}`;
+const DN   = s => `{#FF6B6B-fg}${String(s)}{/}`;
+const GRY  = s => `{#999999-fg}${String(s)}{/}`;
+// Aliases for header/accent usage
+const O    = Y;
+const OB   = s => `{#FFD700-fg}{bold}${String(s)}{/}`;
+const LBL  = C;
+
+// Badges
+const GRN_BG = s => `{#006600-bg}{white-fg}{bold} ${String(s)} {/}`;
+const RED_BG = s => `{#880000-bg}{white-fg}{bold} ${String(s)} {/}`;
+const YEL_BG = s => `{#885500-bg}{white-fg}{bold} ${String(s)} {/}`;
+const TL_BG  = s => `{#005566-bg}{white-fg}{bold} ${String(s)} {/}`;  // teal badge
+
+// Separator line — cyan
+const HR = (w = 90) => `{#00FFFF-fg}${'-'.repeat(w)}{/}`;
+
+// ─────────────────────────────────────────────
+// ALWAYS put fg:'white' on every box so text
+// never inherits a potentially-black terminal default.
+// ─────────────────────────────────────────────
+const BOX   = { bg: 'black', fg: 'white' };
+const BCYAN = { type: 'line', fg: '#00FFFF' };
+const BDIM  = { type: 'line', fg: '#005566' };
+
+// ─────────────────────────────────────────────
+// FORMATTERS
+// ─────────────────────────────────────────────
+const pad      = (s, n) => String(s == null ? '-' : s).padEnd(n);
 const fmtPrice = v => {
+  if (!v || isNaN(v)) return '-';
   if (v >= 1000)  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (v >= 1)     return '$' + v.toFixed(2);
-  if (v >= 0.01)  return '$' + v.toFixed(5);
-  return '$' + v.toPrecision(4);
+  if (v >= 0.001) return '$' + v.toFixed(5);
+  return '$' + v.toExponential(3);
 };
-const fmtPct  = v  => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
-const fmtChg  = v  => { const s = v > 0 ? '+' : ''; return Math.abs(v) >= 1000 ? s + v.toLocaleString('en-US', { maximumFractionDigits: 0 }) : s + v.toFixed(4); };
-const nowTime = () => new Date().toLocaleTimeString('en-US', { hour12: false });
+const fmtPct   = v => (v > 0 ? '+' : '') + (v || 0).toFixed(2) + '%';
+const fmtVol   = s => (s && s !== '-') ? '$' + s : '-';
+const nowTime  = () => new Date().toLocaleTimeString('en-US', { hour12: false });
 
-// ── pad RAW text BEFORE chalk — only way to keep alignment ──
-const pad  = (s, n) => String(s).padEnd(n);
-const padL = (s, n) => String(s).padStart(n);
-
-// ── Colors (all visible on black background) ─
-const G   = s => chalk.greenBright(s);
-const R   = s => chalk.redBright(s);
-const Y   = s => chalk.yellow(s);
-const C   = s => chalk.cyanBright(s);
-const W   = s => chalk.white.bold(s);
-const WW  = s => chalk.white(s);
-const LBL = s => chalk.cyan(s);
-const SEP = s => chalk.blue(s);
-const DIM = s => chalk.dim(s);
-
-// ── Tag helpers (for blessed tags:true boxes) ─
-const tG  = s => `{green-fg}${s}{/}`;
-const tR  = s => `{red-fg}${s}{/}`;
-const tY  = s => `{yellow-fg}${s}{/}`;
-const tC  = s => `{cyan-fg}${s}{/}`;
-const tW  = s => `{white-fg}{bold}${s}{/}`;
-const tWW = s => `{white-fg}${s}{/}`;
-
-// ── Progress bar ──────────────────────────────
-function progressBar(pct, width = 38) {
-  const filled = Math.round(pct / 100 * width);
-  return chalk.greenBright('█'.repeat(filled)) + chalk.blue('░'.repeat(width - filled));
+// ─────────────────────────────────────────────
+// PROGRESS BAR
+// ─────────────────────────────────────────────
+function progressBar(pct, width = 36) {
+  const filled = Math.round(Math.max(0, Math.min(100, pct || 0)) / 100 * width);
+  const empty  = Math.max(0, width - filled);
+  return `{#00FF88-fg}${'█'.repeat(filled)}{/}{#114422-fg}${'░'.repeat(empty)}{/}`;
 }
 
-// ── ASCII Line Chart ─────────────────────────
-// values: number[], labels: string[], height: rows, width: chart columns
-function asciiLineChart(values, labels, opts = {}) {
-  const { height = 7, width = 48, colFn = chalk.greenBright, axisFn = chalk.cyan, labelFn = chalk.white, axisW = 8 } = opts;
-  if (!values || values.length < 2) return '  (no data)\n';
+// ─────────────────────────────────────────────
+// FILLED BAR CHART
+// Solid █ columns, NO gap → clean area-chart look
+// matching the reference image exactly.
+// ─────────────────────────────────────────────
+function barFillChart(values, labels, opts = {}) {
+  const {
+    height  = 10,
+    colW    = 2,    // 2-char wide columns
+    gap     = 0,    // no gap → solid wall of bars
+    axisW   = 7,
+    colTag  = '#00FF88-fg',
+    axisTag = '#00FFFF-fg',
+  } = opts;
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = Math.max(max - min, 1);
-
-  // toRow: value → grid row index (0 = top = max)
-  const toRow = v => Math.max(0, Math.min(height - 1, Math.round((1 - (v - min) / range) * (height - 1))));
-
-  // Build empty grid
-  const grid = Array.from({ length: height }, () => Array(width).fill(' '));
-
-  const n = values.length;
-  for (let i = 0; i < n; i++) {
-    const x  = Math.round(i / (n - 1) * (width - 1));
-    const y  = toRow(values[i]);
-    if (i === 0) {
-      grid[y][x] = '●';
-    } else {
-      const prevI = i - 1;
-      const px    = Math.round(prevI / (n - 1) * (width - 1));
-      const py    = toRow(values[prevI]);
-
-      // Fill horizontal span between prevX and x
-      for (let cx = px; cx <= x; cx++) {
-        const t  = (x === px) ? 1 : (cx - px) / (x - px);
-        const cy = Math.round(py + (y - py) * t);
-        if (cx === x) {
-          grid[cy][cx] = i === n - 1 ? '◆' : '●';
-        } else if (cx === px) {
-          // corner char
-          if      (y < py) grid[cy][cx] = '╮';
-          else if (y > py) grid[cy][cx] = '╯';
-          else             grid[cy][cx] = '─';
-        } else {
-          grid[cy][cx] = grid[cy][cx] === ' ' ? '─' : grid[cy][cx];
-        }
-        // vertical fill between rows
-        if (cy !== py && cx > px && cx <= x) {
-          const yMin = Math.min(cy, py + (cy < py ? 0 : 1));
-          const yMax = Math.max(cy, py + (cy < py ? 0 : 1));
-          for (let vy = yMin; vy <= yMax; vy++) {
-            if (grid[vy][cx] === ' ') grid[vy][cx] = '│';
-          }
-        }
-      }
-    }
+  if (!values || values.length < 2 || values.every(v => !v)) {
+    return `{white-fg}  (no chart data available)\n{/}`;
   }
 
-  // Render rows with y-axis
+  const n   = values.length;
+  const lo  = Math.min(...values);
+  const hi  = Math.max(...values);
+  const rng = Math.max(hi - lo, 1);
+
+  // barH: rows filled from bottom (1 = just base, height = full column)
+  const getBarH = v => Math.max(1, Math.round((v - lo) / rng * (height - 1)) + 1);
+
+  const fmtV = v => {
+    const a = Math.abs(v);
+    if (a >= 10000) return (v / 1000).toFixed(0) + 'k';
+    if (a >= 1000)  return Math.round(v).toString();
+    if (a >= 10)    return v.toFixed(0);
+    return v.toFixed(1);
+  };
+
   let out = '';
   for (let r = 0; r < height; r++) {
-    const val = max - (r / (height - 1)) * range;
-    const lbl = String(Math.round(val)).padStart(axisW - 1);
-    const tick = r === height - 1 ? '┼' : '┤';
-    out += axisFn(lbl) + axisFn(tick) + colFn(grid[r].join('')) + '\n';
+    const rfb    = height - 1 - r;   // rows from bottom: 0=bottom, height-1=top
+    const rowVal = lo + (rfb / (height - 1)) * rng;
+    out += `{${axisTag}}${fmtV(rowVal).padStart(axisW - 1)}\u2502{/}`;
+    for (let i = 0; i < n; i++) {
+      if (i > 0 && gap > 0) out += ' '.repeat(gap);
+      const bh = getBarH(values[i]);
+      out += rfb < bh
+        ? `{${colTag}}${'█'.repeat(colW)}{/}`
+        : ' '.repeat(colW);
+    }
+    out += '\n';
   }
-  // x-axis line
-  out += ' '.repeat(axisW) + axisFn('└' + '─'.repeat(width)) + '\n';
-  // x-axis labels
-  if (labels && labels.length > 0) {
-    const step = Math.max(1, Math.floor(width / (labels.length - 1 || 1)));
-    const labelRow = ' '.repeat(axisW + 1);
-    out += labelRow + labels.map((l, i) => {
-      const targetX = Math.round(i / (labels.length - 1) * (width - 1));
-      return l;
-    }).join(labelFn(' ').repeat(Math.max(1, step - 4)));
+
+  // Baseline
+  const totalW = n * colW + (gap > 0 ? n * gap - gap : 0);
+  out += ' '.repeat(axisW) + `{${axisTag}}\u2514${'─'.repeat(totalW)}{/}\n`;
+
+  // X labels — show every Nth only
+  if (labels && labels.length) {
+    const step = Math.max(1, Math.ceil(n / 12));
+    out += ' '.repeat(axisW + 1);
+    for (let i = 0; i < n; i++) {
+      if (i > 0 && gap > 0) out += ' '.repeat(gap);
+      if (i % step === 0) {
+        const l = String(labels[i] || '').substring(0, colW).padEnd(colW);
+        out += `{${axisTag}}${l}{/}`;
+      } else {
+        out += ' '.repeat(colW);
+      }
+    }
+    out += '\n';
   }
+
   return out;
 }
 
-// ══════════════════════════════════════════════
+// ─────────────────────────────────────────────
+// BANNERS
+// ─────────────────────────────────────────────
+function errorBanner(msg) {
+  return `\n ${RED_BG('ERROR')}  {#FF6B6B-fg}${msg}{/}\n\n {white-fg}Press{/} {#FFD700-fg}R{/} {white-fg}to retry    {/}{#999999-fg}up/down to scroll{/}\n`;
+}
+function loadingBanner(msg) {
+  return `\n ${TL_BG('LOADING')}  {#00FFFF-fg}${msg || 'Fetching live data...'}{/}\n\n {white-fg}Connecting to Solana mainnet & DexScreener...{/}\n`;
+}
+
+// ─────────────────────────────────────────────
+// LINE INPUT — exit TUI → readline → re-enter TUI
+// ─────────────────────────────────────────────
+function getLineInput(screen, prompt, cb) {
+  screen.program.normalBuffer();
+  screen.program.showCursor();
+
+  process.stdout.write('\n');
+  process.stdout.write('\x1b[36m +--------------------------------------------------+\x1b[0m\n');
+  process.stdout.write('\x1b[36m |  \x1b[1mINPUT\x1b[0m\x1b[36m  \x1b[0m\x1b[97m' + prompt + '\x1b[0m\n');
+  process.stdout.write('\x1b[36m +--------------------------------------------------+\x1b[0m\n');
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  rl.question('\x1b[92m > \x1b[0m', (answer) => {
+    rl.close();
+    screen.program.alternateBuffer();
+    screen.program.hideCursor();
+    screen.alloc();
+    screen.render();
+    cb((answer || '').trim());
+  });
+}
+
+// ══════════════════════════════════════════════════════════
 function startDashboard() {
   const screen = blessed.screen({
-    smartCSR:    true,
-    title:       'Solana Terminal',
-    fullUnicode: true,
-    mouse:       true,
-    forceUnicode: true,
+    smartCSR: true, title: 'Solana Terminal',
+    fullUnicode: true, mouse: true, forceUnicode: true,
   });
 
-  const root = blessed.box({ parent: screen, top: 0, left: 0, width: '100%', height: '100%', style: { bg: 'black' } });
-
-  // ════════════════════════════════════════════
-  // TOP BAR — clean, no blessed borders
-  // ════════════════════════════════════════════
-
-  // Row 0 — logo + ticker + clock (all pure text, no box borders)
-  const topRow = blessed.box({
-    parent: root, top: 0, left: 0, width: '100%', height: 1,
-    tags: true, style: { bg: 'black' }
+  const root = blessed.box({
+    parent: screen, top: 0, left: 0, width: '100%', height: '100%',
+    style: BOX,
   });
 
-  // Logo badge
-  blessed.text({ parent: topRow, top: 0, left: 0, tags: true,
-    content: `{black-bg}{yellow-fg}{bold} ⬡ SOLANA TERMINAL {/}{yellow-fg}│{/}` });
+  // ─────────────────────────────────────────────
+  // TOP BAR (rows 0-1)
+  // ─────────────────────────────────────────────
+  const topRow = blessed.box({ parent: root, top: 0, left: 0, width: '100%', height: 2, tags: true, style: BOX });
 
-  // Ticker — sits to the right of logo
-  const tickerBox = blessed.text({ parent: topRow, top: 0, left: 20, tags: true, content: '' });
+  blessed.text({ parent: topRow, top: 0, left: 1, tags: true, style: BOX,
+    content: '{#00FF88-fg}{bold} ▶ SOLANA TERMINAL{/}' });
+  blessed.text({ parent: topRow, top: 1, left: 1, tags: true, style: BOX,
+    content: '{#00FFFF-fg}   REAL-TIME INTELLIGENCE  ·  DexScreener + Solana RPC{/}' });
+
+  // Ticker (price strip in top bar)
+  const tickerBox = blessed.text({ parent: topRow, top: 0, left: 25, tags: true, content: '', style: BOX });
   function refreshTicker() {
-    const items = DATA.market.slice(0, 6).map(d => {
-      const arrow = d.pct > 0 ? '{green-fg}▲{/}' : '{red-fg}▼{/}';
-      const pctCol = d.pct > 0 ? `{green-fg}${fmtPct(d.pct)}{/}` : `{red-fg}${fmtPct(d.pct)}{/}`;
-      return `{white-fg}{bold}${d.symbol}{/}{white-fg} ${fmtPrice(d.price)} ${arrow}${pctCol}{/}`;
+    if (!DATA.market.length) return;
+    const parts = DATA.market.slice(0, 7).map(d => {
+      const col = d.pct > 0 ? '#00FF88-fg' : '#FF6B6B-fg';
+      return `{white-fg}{bold}${d.symbol}{/} {white-fg}${fmtPrice(d.price)}{/} {${col}}${fmtPct(d.pct)}{/}`;
     });
-    tickerBox.setContent(items.join('  {yellow-fg}│{/}  '));
+    tickerBox.setContent(parts.join('  {#226644-fg}│{/}  '));
   }
-  refreshTicker();
 
-  // Clock — far right
-  const clockBox = blessed.text({ parent: topRow, top: 0, right: 0, tags: true, content: '' });
+  // Clock (top-right)
+  const clockBox = blessed.text({ parent: topRow, top: 0, right: 1, tags: true, content: '', style: BOX });
   function refreshClock() {
     const now = new Date();
     const dt  = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
     const tm  = now.toLocaleTimeString('en-US', { hour12: false });
-    clockBox.setContent(`{yellow-fg}│{/} {green-fg}◉ LIVE{/} {yellow-fg}${dt} ${tm} IST{/} {yellow-fg}│{/}{inverse} v1.0.0 {/}`);
+    clockBox.setContent(`{#00FF88-fg}LIVE{/}  {#00FFFF-fg}${dt} ${tm}{/}  {#005566-bg}{white-fg} v1.0 {/}`);
   }
   refreshClock();
   setInterval(refreshClock, 1000);
 
-  // Row 1 — thin yellow separator line
-  const topSep = blessed.text({
-    parent: root, top: 1, left: 0, width: '100%', height: 1,
-    tags: true, content: `{yellow-fg}${'─'.repeat(200)}{/}`, style: { bg: 'black' }
-  });
+  // Divider row 2 — green
+  blessed.text({ parent: root, top: 2, left: 0, width: '100%', height: 1, tags: true, style: BOX,
+    content: `{#00FF88-fg}${'═'.repeat(300)}{/}` });
 
-  // ════════════════════════════════════════════
-  // NAV BAR — Row 2: tabs  |  Row 3: separator
-  // ════════════════════════════════════════════
-  const navBar = blessed.box({
-    parent: root, top: 2, left: 0, width: '100%', height: 1,
-    tags: true, style: { bg: 'black' }
-  });
-  blessed.text({ parent: navBar, top: 0, right: 0, tags: true,
-    content: `{cyan-fg}HELIUS{/} {white-fg}·{/} {cyan-fg}JUPITER{/} {white-fg}·{/} {cyan-fg}BIRDEYE{/}  {green-fg}◎ MAINNET{/}` });
-  const navContent = blessed.text({ parent: navBar, top: 0, left: 0, tags: true, content: '' });
+  // ─────────────────────────────────────────────
+  // NAV BAR (row 3)
+  // ─────────────────────────────────────────────
+  const navBar = blessed.box({ parent: root, top: 3, left: 0, width: '100%', height: 1, tags: true, style: BOX });
+  blessed.text({ parent: navBar, top: 0, right: 2, tags: true, style: BOX,
+    content: '{#00FFFF-fg}DexScreener · Solana-RPC{/}  {#00FF88-fg}● MAINNET{/}' });
+  const navContent = blessed.text({ parent: navBar, top: 0, left: 0, tags: true, content: '', style: BOX });
 
-  // Row 3 — thin yellow separator below nav
-  const navSep = blessed.text({
-    parent: root, top: 3, left: 0, width: '100%', height: 1,
-    tags: true, content: `{yellow-fg}${'─'.repeat(200)}{/}`, style: { bg: 'black' }
-  });
+  // Divider row 4 — dimmer green
+  blessed.text({ parent: root, top: 4, left: 0, width: '100%', height: 1, tags: true, style: BOX,
+    content: `{#00CC66-fg}${'═'.repeat(300)}{/}` });
 
-  // ════════════════════════════════════════════
-  // RIGHT SIDEBAR (26 cols)
-  // ════════════════════════════════════════════
-  const SBW = 26;
+  // ─────────────────────────────────────────────
+  // RIGHT SIDEBAR
+  // ─────────────────────────────────────────────
+  const SBW = 28;
   const sidebar = blessed.box({
-    parent: root, top: 4, right: 0, width: SBW, bottom: 2,
-    style: { bg: 'black' },
-    border: { type: 'line', fg: 'yellow', left: true, top: false, right: false, bottom: false }
+    parent: root, top: 5, right: 0, width: SBW, bottom: 2,
+    style: BOX,
+    border: { type: 'line', fg: '#00FFFF', left: true, top: false, right: false, bottom: false },
   });
-  // Main pane offset stays at top:4
 
-  const gainBox = blessed.box({ parent: sidebar, top: 0, left: 0, width: '100%', height: 10,
-    label: ' {yellow-fg}▲ GAINERS{/} ', tags: true,
-    border: { type: 'line', fg: 'yellow' }, style: { bg: 'black' }
+  const gainBox = blessed.box({
+    parent: sidebar, top: 0, left: 0, width: '100%', height: 10,
+    label: ' {#00FF88-fg}{bold}TOP GAINERS{/} ', tags: true,
+    border: BCYAN, style: BOX,
   });
   function buildGainers() {
+    if (!DATA.topGainers.length) { gainBox.setContent(WW(' loading...')); return; }
     let s = '';
-    DATA.topGainers.forEach(d => {
-      const bl = Math.max(0, Math.round(Math.min(d.pct / 45 * 8, 8)));
-      s += W(pad(d.symbol, 8)) + G('█'.repeat(bl)) + C('░'.repeat(8 - bl)) + ' ' + G('+' + d.pct.toFixed(1) + '%') + '\n';
+    DATA.topGainers.slice(0, 5).forEach(d => {
+      const bl = Math.max(0, Math.round(Math.min(d.pct / 40 * 10, 10)));
+      s += W(pad(d.symbol, 7)) +
+           `{#00FF88-fg}${'█'.repeat(bl)}{/}{#114422-fg}${'░'.repeat(10 - bl)}{/}` +
+           ' ' + G('+' + d.pct.toFixed(1) + '%') + '\n';
     });
     gainBox.setContent(s);
   }
-  buildGainers();
 
-  const lossBox = blessed.box({ parent: sidebar, top: 10, left: 0, width: '100%', height: 10,
-    label: ' {yellow-fg}▼ LOSERS{/} ', tags: true,
-    border: { type: 'line', fg: 'yellow' }, style: { bg: 'black' }
+  const lossBox = blessed.box({
+    parent: sidebar, top: 10, left: 0, width: '100%', height: 10,
+    label: ' {#FF6B6B-fg}{bold}TOP LOSERS{/} ', tags: true,
+    border: BCYAN, style: BOX,
   });
   function buildLosers() {
+    if (!DATA.topLosers.length) { lossBox.setContent(WW(' loading...')); return; }
     let s = '';
-    DATA.topLosers.forEach(d => {
-      const bl = Math.max(0, Math.round(Math.min(Math.abs(d.pct) / 15 * 8, 8)));
-      s += W(pad(d.symbol, 8)) + R('█'.repeat(bl)) + C('░'.repeat(8 - bl)) + ' ' + R(d.pct.toFixed(1) + '%') + '\n';
+    DATA.topLosers.slice(0, 5).forEach(d => {
+      const bl = Math.max(0, Math.round(Math.min(Math.abs(d.pct) / 15 * 10, 10)));
+      s += W(pad(d.symbol, 7)) +
+           `{#FF6B6B-fg}${'█'.repeat(bl)}{/}{#441122-fg}${'░'.repeat(10 - bl)}{/}` +
+           ' ' + DN(d.pct.toFixed(1) + '%') + '\n';
     });
     lossBox.setContent(s);
   }
-  buildLosers();
 
-  const feedBox = blessed.box({ parent: sidebar, top: 20, left: 0, width: '100%', bottom: 0,
-    label: ' {yellow-fg}● FEED{/} ', tags: true,
-    border: { type: 'line', fg: 'yellow' }, style: { bg: 'black' }
+  const feedBox = blessed.box({
+    parent: sidebar, top: 20, left: 0, width: '100%', bottom: 0,
+    label: ' {#FFD700-fg}{bold}LIVE FEED{/} ', tags: true,
+    border: BCYAN, style: BOX,
   });
   const feedLog = contrib.log({
     parent: feedBox, top: 0, left: 0, width: '100%-2', height: '100%-2',
-    fg: 'white', tags: true, style: { bg: 'black' }
+    fg: 'white', tags: true, style: BOX,
   });
 
-  // ════════════════════════════════════════════
+  // ─────────────────────────────────────────────
   // MAIN PANE
-  // ════════════════════════════════════════════
-  const mainPane = blessed.box({
-    parent: root, top: 4, left: 0, right: SBW, bottom: 2,
-    style: { bg: 'black' }
-  });
+  // ─────────────────────────────────────────────
+  const mainPane = blessed.box({ parent: root, top: 5, left: 0, right: SBW, bottom: 2, style: BOX });
 
-  // Track active scrollable for key routing
   let activeScroll = null;
+  screen.key(['up', 'k'],   () => { activeScroll?.scroll(-1);  screen.render(); });
+  screen.key(['down', 'j'], () => { activeScroll?.scroll(1);   screen.render(); });
+  screen.key(['pageup'],    () => { activeScroll?.scroll(-10); screen.render(); });
+  screen.key(['pagedown'],  () => { activeScroll?.scroll(10);  screen.render(); });
+  screen.key(['home'],      () => { activeScroll?.setScrollPerc(0);   screen.render(); });
+  screen.key(['end'],       () => { activeScroll?.setScrollPerc(100); screen.render(); });
 
-  // Forward arrow keys to the active scrollable box
-  screen.key(['up', 'k'],   () => { if (activeScroll) { activeScroll.scroll(-1); screen.render(); } });
-  screen.key(['down', 'j'], () => { if (activeScroll) { activeScroll.scroll(1);  screen.render(); } });
-  screen.key(['pageup'],    () => { if (activeScroll) { activeScroll.scroll(-10); screen.render(); } });
-  screen.key(['pagedown'],  () => { if (activeScroll) { activeScroll.scroll(10);  screen.render(); } });
-  screen.key(['home'],      () => { if (activeScroll) { activeScroll.setScrollPerc(0);   screen.render(); } });
-  screen.key(['end'],       () => { if (activeScroll) { activeScroll.setScrollPerc(100); screen.render(); } });
-
-  function makeScroll(parent, opts = {}) {
+  function mkScroll(parent, extra = {}) {
     return blessed.box({
-      parent,
-      scrollable:   true,
-      alwaysScroll: true,
-      mouse:        true,
-      style: { bg: 'black', scrollbar: { bg: 'yellow' } },
-      scrollbar: { ch: '│', style: { fg: 'yellow' } },
-      ...opts
+      parent, scrollable: true, alwaysScroll: true, mouse: true, tags: true,
+      style: { ...BOX, scrollbar: { bg: '#00FFFF' } },
+      scrollbar: { ch: '│', style: { fg: '#00FFFF' } },
+      ...extra,
     });
   }
+  const mkBox = (parent, extra = {}) => blessed.box({ parent, tags: true, style: BOX, ...extra });
 
-  // Tab containers
-  const tabContainers = [];
-  // Each tab also records its primary scrollable
-  const tabScrollables = [];
+  // ══════════════════════════════════════════════════════════
+  // F1  MARKET
+  // ══════════════════════════════════════════════════════════
+  const tabMarket = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  blessed.text({ parent: tabMarket, top: 0, left: 1, tags: true, style: BOX,
+    content: `{#00FF88-fg}{bold}MARKET OVERVIEW{/}  {white-fg}Live DEX prices  │  ${CFG.MARKET_SYMBOLS.length} assets  │  DexScreener{/}   {#00FF88-fg}● LIVE{/}` });
 
-  function makeTab(scrollable) {
-    const t = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-    tabContainers.push(t);
-    tabScrollables.push(scrollable || null); // will be set later
-    return t;
-  }
-
-  // ════════════════════════════════════════════
-  // F1 MARKET
-  // ════════════════════════════════════════════
-  const tabMarket = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabMarket);
-
-  blessed.text({ parent: tabMarket, top: 0, left: 1, tags: true,
-    content: `{yellow-fg}MARKET OVERVIEW{/}  {white-fg}— ${DATA.market.length} assets · Sorted by market cap{/}   {green-fg}⬤ LIVE{/}` });
-
-  // Stats cards
+  // SOL stat card
   const statsBox = blessed.box({
-    parent: tabMarket, top: 1, left: 0, right: 0, height: 6,
-    tags: true, style: { bg: 'black' }, border: { type: 'line', fg: 'yellow' }
+    parent: tabMarket, top: 1, left: 0, right: 0, height: 5,
+    tags: true, style: BOX, border: BCYAN,
   });
-  const sol = DATA.market[0];
   function buildStatsRow() {
-    const [C1,C2,C3,C4] = [26,22,22,18];
+    const sol = DATA.market.find(m => m.symbol === 'SOL');
+    if (!sol) { statsBox.setContent(`\n${loadingBanner('Connecting to DexScreener...')}`); return; }
+    const pctStr = fmtPct(sol.pct);
+    const pctTag = sol.pct >= 0 ? `{#00FF88-fg}${pctStr}{/}` : `{#FF6B6B-fg}${pctStr}{/}`;
+    const C1 = 22, C2 = 22, C3 = 20;
     statsBox.setContent(
-      ' ' + LBL(pad('SOL PRICE', C1))   + LBL(pad('DOMINANCE', C2))  + LBL(pad('NETWORK TPS', C3)) + LBL('TVL (DEFI)') + '\n' +
-      ' ' + Y(pad(fmtPrice(sol.price), C1)) + C(pad('4.98%', C2))   + G(pad('4,118 /sec', C3))    + Y('$8.42B') + '\n' +
-      ' ' + G(pad('▲ ' + fmtPct(sol.pct) + ' (24h)', C1)) + WW(pad('of total market cap', C2)) + WW(pad('mainnet-beta', C3)) + G('▲ +12% this wk') + '\n\n' +
-      ' ' + LBL('24H HIGH: ') + G(pad(fmtPrice(sol.high), 13)) + LBL('24H LOW: ') + R(pad(fmtPrice(sol.low), 13)) + LBL('VOL: ') + C(pad('$' + sol.vol, 8)) + LBL('MCAP: ') + WW('$' + sol.mcap)
+      ' ' + LBL(pad('SOL PRICE', C1))           + LBL(pad('24H CHANGE', C2))       + LBL(pad('VOLUME 24H', C3)) + LBL('MKT CAP')    + '\n' +
+      ' ' + `{#00FF88-fg}{bold}${pad(fmtPrice(sol.price), C1)}{/}` +
+             pctTag + ' '.repeat(Math.max(1, C2 - pctStr.length)) +
+             Y(pad(fmtVol(sol.vol), C3))         + WW('$' + (sol.mcap || '-'))                                   + '\n' +
+      ' ' + GRY(pad('via DexScreener/USDC', C1)) + GRY(pad('24h rolling', C2))     + GRY(pad('total DEX', C3))  + GRY('fully diluted')
     );
   }
-  buildStatsRow();
 
-  // Market table — full scrollable
-  const mktScroll = makeScroll(tabMarket, { top: 7, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(mktScroll);
-  const mktBox = blessed.box({ parent: mktScroll, tags: false, width: '100%', style: { bg: 'black' }, border: { type: 'line', fg: 'yellow' } });
+  // Market table
+  const mktScroll = mkScroll(tabMarket, { top: 6, left: 0, right: 0, bottom: 0 });
+  const mktBox    = mkBox(mktScroll, { width: '100%-2' });
 
-  const MC = { sym: 9, name: 14, price: 13, pct: 12, chg: 13, vol: 9, mcap: 9 };
+  const MC = [8, 14, 14, 11, 10, 9];
   function buildMarketTable() {
-    let out =
-      ' ' + LBL(pad('SYMBOL',  MC.sym))  + LBL(pad('NAME',   MC.name)) + LBL(pad('PRICE',  MC.price)) +
-             LBL(pad('24H %',   MC.pct)) + LBL(pad('CHANGE', MC.chg))  + LBL(pad('VOLUME', MC.vol))   + LBL(pad('MKT CAP', MC.mcap)) + LBL(' 7D CHART') + '\n';
-    out += SEP(' ' + '─'.repeat(96)) + '\n';
+    if (!DATA.market.length) {
+      mktBox.setContent(loadingBanner('Fetching live prices from DexScreener...'));
+      mktBox.height = 10; return;
+    }
+    const ts  = new Date().toLocaleTimeString('en-US', { hour12: false });
+    let out   = '';
+    out += TL_BG('PRICE TABLE') + `  ${WW('Live DEX prices')}  ${GRY('updated ' + ts)}\n`;
+    out += HR(82) + '\n';
+    out += ' ' + LBL(pad('SYMBOL', MC[0])) + LBL(pad('NAME',    MC[1])) +
+           LBL(pad('PRICE',        MC[2])) + LBL(pad('24H %',   MC[3])) +
+           LBL(pad('VOLUME',       MC[4])) + LBL(pad('MKT CAP', MC[5])) + LBL('MOMENTUM') + '\n';
+    out += HR(82) + '\n';
+
     DATA.market.forEach(d => {
-      const isUp = d.pct > 0;
-      const col  = isUp ? chalk.greenBright : chalk.redBright;
-      const spark = DATA.sparklines[d.symbol] || '▄▄▄▄▄▄▄▄▄▄▄▄';
-      out +=
-        ' ' + W(pad(d.symbol, MC.sym))                          +
-        WW(pad((d.name || '').substring(0, 12), MC.name))       +
-        W(pad(fmtPrice(d.price), MC.price))                     +
-        col(pad((isUp ? '▲ ' : '▼ ') + fmtPct(d.pct), MC.pct))+
-        col(pad(fmtChg(d.change), MC.chg))                      +
-        WW(pad('$' + d.vol, MC.vol))                            +
-        WW(pad('$' + d.mcap, MC.mcap))                         +
-        ' ' + (isUp ? G(spark) : R(spark)) + '\n';
-      out += SEP(' ' + '─'.repeat(96)) + '\n';
+      const isUp   = d.pct > 0;
+      const pctStr = fmtPct(d.pct);
+      const pctTag = isUp ? `{#00FF88-fg}${pctStr}{/}` : `{#FF6B6B-fg}${pctStr}{/}`;
+      const nameS  = (d.name || d.symbol).substring(0, MC[1] - 1);
+      const priceS = fmtPrice(d.price);
+      const volS   = fmtVol(d.vol);
+      const mcapS  = '$' + (d.mcap || '-');
+      // Momentum bar — proportional to abs(pct)
+      const tFill  = Math.max(1, Math.round(Math.min(Math.abs(d.pct), 20) / 20 * 8));
+      const tEmpty = Math.max(0, 8 - tFill);
+      const spark  = isUp
+        ? `{#00FF88-fg}${'█'.repeat(tFill)}${'░'.repeat(tEmpty)}{/}`
+        : `{#FF6B6B-fg}${'█'.repeat(tFill)}${'░'.repeat(tEmpty)}{/}`;
+
+      out += ' ' +
+        W(pad(d.symbol, MC[0])) +
+        `{#00FFFF-fg}${pad(nameS, MC[1])}{/}` +
+        `{#00FF88-fg}{bold}${pad(priceS, MC[2])}{/}` +
+        pctTag + ' '.repeat(Math.max(1, MC[3] - pctStr.length)) +
+        WW(pad(volS,  MC[4])) +
+        WW(pad(mcapS, MC[5])) +
+        spark + '\n';
     });
+
     mktBox.setContent(out);
-    mktBox.height = DATA.market.length * 2 + 4;
+    mktBox.height = DATA.market.length + 5;
   }
-  buildMarketTable();
 
-  // ════════════════════════════════════════════
-  // F2 PRICE
-  // ════════════════════════════════════════════
-  const tabPrice = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabPrice);
-
-  const priceScroll = makeScroll(tabPrice, { top: 0, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(priceScroll);
-  const priceInner = blessed.box({ parent: priceScroll, tags: false, width: '100%', style: { bg: 'black' } });
+  // ══════════════════════════════════════════════════════════
+  // F2  PRICE
+  // ══════════════════════════════════════════════════════════
+  const tabPrice    = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  const priceScroll = mkScroll(tabPrice, { top: 0, left: 0, right: 0, bottom: 0 });
+  const priceBox    = mkBox(priceScroll, { width: '100%-2' });
 
   function buildPriceTab() {
-    const d    = DATA.market[0];
-    const isUp = d.pct > 0;
-    const col  = isUp ? chalk.greenBright : chalk.redBright;
-    const PH   = { sym: 20, price: 16, chg: 14, high: 14, low: 14, vol: 12 };
+    const d = DATA.market.find(m => m.symbol === 'SOL');
+    if (!d) { priceBox.setContent(loadingBanner('Loading SOL price...')); priceBox.height = 10; return; }
+    const isUp   = d.pct > 0;
+    const pctTag = isUp ? `{#00FF88-fg}${fmtPct(d.pct)}{/}` : `{#FF6B6B-fg}${fmtPct(d.pct)}{/}`;
     let out = '';
 
-    out += Y(' PRICE DETAIL') + WW('  — SOL / USD · All Exchanges') + '\n';
-    out += SEP(' ' + '═'.repeat(90)) + '\n';
+    out += OB(' PRICE DETAIL') + `  ${WW('SOL / USD  │  DexScreener  │  All Solana DEXes')}\n`;
+    out += HR(86) + '\n\n';
 
-    // Hero stats
-    out += '\n ' + LBL(pad('SYMBOL', PH.sym)) + LBL(pad('LAST PRICE', PH.price)) + LBL(pad('24H CHANGE', PH.chg)) + LBL(pad('24H HIGH', PH.high)) + LBL(pad('24H LOW', PH.low)) + LBL('VOLUME') + '\n';
-    out += ' ' + W(pad('SOL / USD', PH.sym)) + W(pad(fmtPrice(d.price), PH.price)) + col(pad((isUp ? '▲ ' : '▼ ') + fmtPct(d.pct), PH.chg)) + G(pad(fmtPrice(d.high), PH.high)) + R(pad(fmtPrice(d.low), PH.low)) + C('$' + d.vol) + '\n';
-    out += ' ' + WW(pad('Solana · Binance', PH.sym)) + WW(pad('vs USD closing', PH.price)) + WW(pad('intraday', PH.chg)) + WW(pad('24h intraday', PH.high)) + '\n';
-    out += '\n ' + LBL('MKT CAP: ') + W('$' + d.mcap + '    ') + LBL('DOMINANCE: ') + C('4.98%') + '    ' + LBL('CHANGE $: ') + col('$' + Math.abs(d.change).toFixed(2)) + '\n';
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
+    const P = [20, 16, 14, 14];
+    out += ' ' + LBL(pad('SYMBOL',      P[0])) + LBL(pad('LAST PRICE', P[1])) + LBL(pad('24H CHANGE', P[2])) + LBL('VOLUME 24H') + '\n';
+    out += ' ' + W(pad('SOL / USD',     P[0])) + `{#00FF88-fg}{bold}${pad(fmtPrice(d.price), P[1])}{/}` +
+           pctTag + ' '.repeat(Math.max(1, P[2] - fmtPct(d.pct).length)) + Y(fmtVol(d.vol)) + '\n';
+    out += ' ' + GRY(pad('Mainnet-beta', P[0])) + GRY(pad('via DexScreener', P[1])) + '\n';
+    out += `\n ${LBL('24H HIGH:')} ${G(fmtPrice(d.high))}    ${LBL('24H LOW:')} ${DN(fmtPrice(d.low))}    ${LBL('MKT CAP:')} ${WW('$' + d.mcap)}\n`;
+    out += HR(86) + '\n';
 
-    // ASCII chart
-    out += '\n ' + Y(' SOL/USD — 24H INTRADAY CHART') + '\n\n';
-    out += WW('  145.20 ') + G('┤') + ' '.repeat(44) + G('╭─╮') + '\n';
-    out += WW('  143.80 ') + G('┤') + ' '.repeat(39) + G('╭───╯  │') + '\n';
-    out += WW('  142.37 ') + G('┤──────────────────────────────────────╯') + '       ' + Y('╰── ← NOW') + '\n';
-    out += WW('  141.20 ') + G('┤') + ' '.repeat(29) + G('╭────────╯') + '\n';
-    out += WW('  139.60 ') + G('┤') + ' '.repeat(16) + G('╭──╮') + ' '.repeat(9) + G('│') + '\n';
-    out += WW('  138.90 ') + G('┤') + ' '.repeat(7)  + G('╭──╮     │  │    ╭───╯') + '\n';
-    out += WW('  137.40 ') + G('┤') + ' '.repeat(2)  + G('╭────╯  ╰─────╯  ╰────╯') + '\n';
-    out += WW('  136.00 ') + G('┼───╯') + '\n';
-    out += WW('           └' + '─'.repeat(50)) + '\n';
-    out += C('           00:00  04:00  08:00  12:00  16:00  20:00  22:59') + '\n';
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
-
-    // Exchange breakdown
-    out += '\n ' + Y(' EXCHANGE BREAKDOWN') + '\n\n';
-    const EC = { name: 14, price: 15, pct: 14, vol: 12 };
-    out += ' ' + LBL(pad('EXCHANGE', EC.name)) + LBL(pad('PRICE', EC.price)) + LBL(pad('24H %', EC.pct)) + LBL('VOLUME') + '\n';
-    out += SEP(' ' + '─'.repeat(55)) + '\n';
-    DATA.priceExchanges.forEach(e => {
-      const c = e.pct > 0 ? chalk.greenBright : chalk.redBright;
-      out += ' ' + W(pad(e.name, EC.name)) + WW(pad('$' + e.price.toFixed(2), EC.price)) + c(pad(fmtPct(e.pct), EC.pct)) + C(e.vol) + '\n';
+    // SOL 24h chart — solid filled bars
+    out += `\n ${OB(' SOL / USD  ─  24H PRICE CHART')}  ${GRY('estimated from 24h change')}\n\n`;
+    out += barFillChart(DATA.chartData.y, DATA.chartData.x, {
+      height: 12, colW: 3, gap: 0, axisW: 9,
+      colTag: '#00FF88-fg', axisTag: '#00FFFF-fg',
     });
+    out += GRY(' Note: full OHLC history requires a paid data API. Chart is estimated.\n');
+    out += HR(86) + '\n';
 
-    priceInner.setContent(out);
-    priceInner.height = 45;
+    // All tokens table
+    out += `\n ${OB(' ALL TOKEN PRICES')}\n\n`;
+    out += ' ' + LBL(pad('SYMBOL', 12)) + LBL(pad('PRICE', 16)) + LBL(pad('24H %', 14)) + LBL('VOLUME') + '\n';
+    out += HR(54) + '\n';
+    DATA.market.forEach(e => {
+      const ec = e.pct > 0 ? `{#00FF88-fg}${fmtPct(e.pct)}{/}` : `{#FF6B6B-fg}${fmtPct(e.pct)}{/}`;
+      out += ' ' + W(pad(e.symbol, 12)) + `{#00FF88-fg}${pad(fmtPrice(e.price), 16)}{/}` +
+             ec + ' '.repeat(Math.max(1, 14 - fmtPct(e.pct).length)) + C(fmtVol(e.vol)) + '\n';
+    });
+    priceBox.setContent(out);
+    priceBox.height = 60;
   }
-  buildPriceTab();
 
-  // ════════════════════════════════════════════
-  // F3 WALLET
-  // ════════════════════════════════════════════
-  const tabWallet = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabWallet);
+  // ══════════════════════════════════════════════════════════
+  // F3  WALLET
+  // ══════════════════════════════════════════════════════════
+  const tabWallet = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  const wltScroll = mkScroll(tabWallet, { top: 0, left: 0, right: 0, bottom: 0 });
+  const wltBox    = mkBox(wltScroll, { width: '100%-2' });
 
-  const wltScroll = makeScroll(tabWallet, { top: 0, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(wltScroll);
-  const wltInner = blessed.box({ parent: wltScroll, tags: false, width: '100%', style: { bg: 'black' } });
+  let walletAddr = null, walletLoading = false, walletError = null;
 
-  const ww = DATA.wallet;
   function buildWalletTab() {
     let out = '';
-    out += Y(' WALLET INSIGHTS') + WW('  — Portfolio analytics · PnL · Transactions') + '\n';
-    out += SEP(' ' + '═'.repeat(90)) + '\n\n';
+    out += OB(' WALLET INSIGHTS') + `  ${WW('Portfolio analytics | Transaction history')}  ${walletAddr ? GRY('I=change  R=refresh') : C('Press I to enter wallet address')}\n`;
+    out += HR(92) + '\n\n';
 
-    // Address + balance header
-    out += ' ' + LBL('ADDRESS:  ') + C(ww.fullAddress) + '\n\n';
-    const [WC1, WC2, WC3] = [32, 28, 28];
-    out += ' ' + LBL(pad('PORTFOLIO VALUE', WC1)) + LBL(pad('PNL TODAY', WC2)) + LBL('PNL (30D)') + '\n';
-    out += ' ' + Y(W(pad('$' + ww.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 }), WC1))) +
-           G(pad('+$' + ww.pnl.day.toFixed(2) + ' (+' + ww.pnl.dayPct.toFixed(2) + '%)', WC2)) +
-           G('+$' + ww.pnl.month.toFixed(2) + ' (+' + ww.pnl.monthPct.toFixed(2) + '%)') + '\n';
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
+    if (!walletAddr) {
+      out += `\n ${TL_BG('NO WALLET LOADED')}\n\n`;
+      out += ` ${WW('Enter a Solana wallet address to view live balances & transactions.')}\n\n`;
+      out += ` ${C('Press')} ${W(' I ')} ${C('to enter a Solana wallet address')}\n\n`;
+      out += ` ${LBL('Example:  ')}${GRY('7xKkPmVn8RqwZ2jLfBd4uYtX1sCo9HGe5Ap3mNpQ')}\n\n`;
+      wltBox.setContent(out); wltBox.height = 16; return;
+    }
+    if (walletLoading) {
+      out += loadingBanner('Fetching wallet from Solana RPC...');
+      out += ` ${LBL('Address: ')}${C(walletAddr)}\n`;
+      wltBox.setContent(out); wltBox.height = 14; return;
+    }
+    if (walletError) {
+      out += errorBanner(walletError);
+      out += ` ${LBL('Address: ')}${C(walletAddr)}\n\n`;
+      out += ` ${WW('Press')} ${C('I')} ${WW('to try a different address')}\n`;
+      wltBox.setContent(out); wltBox.height = 16; return;
+    }
+
+    const ww = DATA.wallet;
+    if (!ww) return;
+
+    out += ` ${LBL('WALLET ADDRESS')}\n`;
+    out += ` ${C(ww.fullAddress)}\n`;
+    out += ` ${GRY('Solana mainnet-beta via public RPC')}\n\n`;
+    out += ` {#00FF88-fg}{bold}$${ww.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{/}  ${WW('Total Portfolio Value (USD)')}\n\n`;
+
+    out += ' ' + LBL(pad('ASSETS', 22))       + LBL('SHORT ADDRESS')   + '\n';
+    out += ' ' + WW(pad(ww.holdings.length + ' tokens', 22)) + WW(ww.address) + '\n';
+    out += HR(92) + '\n';
 
     // Holdings
-    out += '\n ' + Y(' HOLDINGS') + '\n\n';
-    const HC = { tok: 10, amt: 18, val: 14, pct: 7 };
-    out += ' ' + LBL(pad('TOKEN', HC.tok)) + LBL(pad('AMOUNT', HC.amt)) + LBL(pad('VALUE', HC.val)) + LBL(pad('%', HC.pct)) + LBL('BAR          ') + LBL('24H CHG') + '\n';
-    out += SEP(' ' + '─'.repeat(76)) + '\n';
+    out += `\n ${TL_BG('HOLDINGS')}  ${WW(ww.holdings.length + ' assets from Solana RPC')}\n\n`;
+    out += ' ' + LBL(pad('TOKEN', 10)) + LBL(pad('AMOUNT', 22)) + LBL(pad('USD VALUE', 18)) + LBL(pad('ALLOC%', 8)) + LBL('WEIGHT') + '\n';
+    out += HR(78) + '\n';
     ww.holdings.forEach(h => {
-      const col  = h.change > 0 ? chalk.greenBright : h.change < 0 ? chalk.redBright : chalk.white;
-      const bLen = Math.round(h.pct / 100 * 10);
-      out += ' ' + W(pad(h.token, HC.tok)) + WW(pad(String(h.amount), HC.amt)) +
-             W(pad('$' + h.value.toLocaleString('en-US', { maximumFractionDigits: 2 }), HC.val)) +
-             WW(pad(h.pct + '%', HC.pct)) + Y('█'.repeat(bLen)) + C('░'.repeat(10 - bLen)) + '  ' + col(fmtPct(h.change)) + '\n';
+      const barF = Math.round((h.pct || 0) / 100 * 14);
+      const barE = Math.max(0, 14 - barF);
+      const val  = h.value > 0
+        ? `{#00FF88-fg}{bold}$${h.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}{/}`
+        : GRY('price unavailable   ');
+      const vLen = h.value > 0 ? ('$' + h.value.toFixed(2)).length : 17;
+      out += ' ' + W(pad(h.token, 10)) +
+             WW(pad(String(h.amount), 22)) +
+             val + ' '.repeat(Math.max(1, 18 - vLen)) +
+             Y(pad((h.pct || 0).toFixed(1) + '%', 8)) +
+             `{#00FF88-fg}${'█'.repeat(barF)}{/}{#114422-fg}${'░'.repeat(barE)}{/}\n`;
     });
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
+    out += HR(92) + '\n';
 
     // Transactions
-    out += '\n ' + Y(' RECENT TRANSACTIONS') + '\n\n';
-    const TC = { time: 10, type: 9, from: 17, to: 17, status: 12 };
-    out += ' ' + LBL(pad('TIME', TC.time)) + LBL(pad('TYPE', TC.type)) + LBL(pad('FROM', TC.from)) + LBL(pad('TO', TC.to)) + LBL(pad('STATUS', TC.status)) + LBL('SIG') + '\n';
-    out += SEP(' ' + '─'.repeat(82)) + '\n';
-    const tColors = { SWAP: chalk.cyanBright, BUY: chalk.greenBright, SELL: chalk.redBright, STAKE: chalk.yellow, RECEIVE: chalk.magentaBright };
-    ww.recentTxns.forEach(tx => {
-      const tc = tColors[tx.type] || chalk.white;
-      out += ' ' + WW(pad(tx.time, TC.time)) + tc(pad(tx.type, TC.type)) + WW(pad(tx.from, TC.from)) + WW(pad('→ ' + tx.to, TC.to)) + G(pad(tx.status, TC.status)) + C(tx.sig) + '\n';
+    out += `\n ${TL_BG('RECENT TRANSACTIONS')}  ${WW('Last 5 via Solana RPC')}\n\n`;
+    out += ' ' + LBL(pad('TIME', 12)) + LBL(pad('TYPE', 10)) + LBL(pad('STATUS', 14)) + LBL('SIGNATURE') + '\n';
+    out += HR(66) + '\n';
+    (ww.recentTxns || []).forEach(tx => {
+      const st = tx.status === 'CONFIRMED' ? GRN_BG('CONFIRMED') : RED_BG('FAILED');
+      out += ' ' + WW(pad(tx.time, 12)) + C(pad(tx.type, 10)) + st + '  ' + GRY(tx.sig) + '\n';
     });
-
-    wltInner.setContent(out);
-    wltInner.height = 50;
+    if (!ww.recentTxns?.length) out += ` ${WW('No recent transactions found.')}\n`;
+    out += `\n ${GRY('Full history:  solscan.io/account/' + ww.fullAddress)}\n`;
+    wltBox.setContent(out);
+    wltBox.height = Math.max(32, 24 + (ww.holdings?.length || 0) + (ww.recentTxns?.length || 0) + 8);
   }
-  buildWalletTab();
 
-  // ════════════════════════════════════════════
-  // F4 TOKEN
-  // ════════════════════════════════════════════
-  const tabToken = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabToken);
+  async function loadWallet(address) {
+    walletAddr = address; walletLoading = true; walletError = null;
+    buildWalletTab(); screen.render();
+    try {
+      await loadWalletData(address);
+      walletLoading = false;
+    } catch (e) {
+      walletLoading = false;
+      walletError = e.message.substring(0, 80);
+    }
+    buildWalletTab(); wltScroll.setScrollPerc(0); screen.render();
+  }
 
-  const tokScroll = makeScroll(tabToken, { top: 0, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(tokScroll);
-  const tokInner = blessed.box({ parent: tokScroll, tags: false, width: '100%', style: { bg: 'black' } });
+  // ══════════════════════════════════════════════════════════
+  // F4  TOKEN
+  // ══════════════════════════════════════════════════════════
+  const tabToken  = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  const tokScroll = mkScroll(tabToken, { top: 0, left: 0, right: 0, bottom: 0 });
+  const tokBox    = mkBox(tokScroll, { width: '100%-2' });
 
-  const tk = DATA.token;
+  let tokenQuery = null, tokenLoading = false, tokenError = null;
+
   function buildTokenTab() {
-    let out = '';
-    out += Y(' TOKEN ANALYTICS') + WW('  — ' + tk.symbol + ' · ' + tk.name) + '\n';
-    out += SEP(' ' + '═'.repeat(90)) + '\n\n';
+    const tk  = DATA.token;
+    let out   = '';
+    out += OB(' TOKEN ANALYTICS') + `  ${WW(tk ? tk.symbol + ' / ' + tk.name : 'No Token Selected')}  ${tokenQuery ? GRY('I=change  R=refresh') : C('Press I to enter token')}\n`;
+    out += HR(92) + '\n';
 
-    // Hero
-    const TK = { f1: 20, f2: 14, f3: 14, f4: 14, f5: 12 };
-    out += ' ' + LBL(pad('TOKEN', TK.f1)) + LBL(pad('PRICE', TK.f2)) + LBL(pad('MKT CAP', TK.f3)) + LBL(pad('VOL 24H', TK.f4)) + LBL(pad('LIQUIDITY', TK.f5)) + LBL('HOLDERS') + '\n';
-    out += ' ' + W(pad(tk.symbol + ' — ' + tk.name, TK.f1)) + W(pad(fmtPrice(tk.price), TK.f2)) + W(pad(tk.marketCap, TK.f3)) + C(pad(tk.volume24h, TK.f4)) + G(pad(tk.liquidity, TK.f5)) + WW(tk.holders) + '\n';
-    out += ' ' + C(pad(tk.shortMint, TK.f1)) + G('▲ +' + tk.priceChange24h.toFixed(2) + '% (24h)') + '\n';
-    out += '\n ' + LBL('FDV: ') + WW(pad(tk.fdv, 14)) + LBL('SUPPLY: ') + WW(pad(tk.supply, 14)) + LBL('VOL 7D: ') + C(tk.volume7d) + '\n';
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
+    if (!tokenQuery) {
+      out += `\n ${TL_BG('NO TOKEN SELECTED')}\n\n`;
+      out += ` ${WW('Enter a token mint address or symbol.')}\n\n`;
+      out += ` ${C('Press')} ${W(' I ')} ${C('to search a token')}\n\n`;
+      out += ` ${LBL('Symbols:')}  ${G('BONK')}   ${G('WIF')}   ${G('JUP')}   ${G('SOL')}   ${G('RAY')}\n`;
+      out += ` ${LBL('Mint:   ')}  ${GRY('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263')}\n`;
+      tokBox.setContent(out); tokBox.height = 16; return;
+    }
+    if (tokenLoading) {
+      out += loadingBanner('Fetching token data from DexScreener...');
+      out += ` ${LBL('Query: ')}${C(tokenQuery)}\n`;
+      tokBox.setContent(out); tokBox.height = 14; return;
+    }
+    if (tokenError) {
+      out += errorBanner(tokenError);
+      out += ` ${LBL('Query: ')}${C(tokenQuery)}\n\n`;
+      out += ` ${WW('Press')} ${C('I')} ${WW('to try a different token')}\n`;
+      tokBox.setContent(out); tokBox.height = 16; return;
+    }
+    if (!tk) return;
 
-    // Risk signals
-    out += '\n ' + Y(' RISK SIGNALS') + '\n\n';
-    const RSK = { lvl: 9, signal: 24 };
-    out += ' ' + LBL(pad('LEVEL', RSK.lvl)) + LBL(pad('SIGNAL', RSK.signal)) + LBL('DETAIL') + '\n';
-    out += SEP(' ' + '─'.repeat(62)) + '\n';
-    tk.riskSignals.forEach(rr => {
-      const badge = rr.level === 'HIGH'   ? chalk.bgRed.black(' HIGH   ') :
-                    rr.level === 'MEDIUM' ? chalk.bgYellow.black(' MEDIUM ') :
-                    chalk.bgGreen.black(' LOW    ');
-      out += ' ' + badge + '  ' + W(pad(rr.label, RSK.signal - 2)) + WW(rr.detail) + '\n';
+    const H = 20;
+    out += `\n ${TL_BG('TOKEN OVERVIEW')}\n\n`;
+    out += '  ' + LBL(pad('TOKEN',    H)) + LBL(pad('PRICE',  H))    + LBL(pad('MKT CAP', H)) + LBL('VOLUME 24H') + '\n';
+    out += '  ' + W(pad(tk.symbol,    H)) + `{#00FF88-fg}{bold}${pad(fmtPrice(tk.price), H)}{/}` + W(pad(tk.marketCap, H)) + C(tk.volume24h) + '\n';
+    out += '  ' + GRY(tk.name || '-') + '\n';
+    const pc = tk.priceChange24h >= 0
+      ? `{#00FF88-fg}+${tk.priceChange24h.toFixed(2)}% (24h){/}`
+      : `{#FF6B6B-fg}${tk.priceChange24h.toFixed(2)}% (24h){/}`;
+    out += '  ' + GRY(tk.shortMint) + '   ' + pc + '\n\n';
+    out += '  ' + LBL(pad('LIQUIDITY', H)) + LBL('FDV') + '\n';
+    out += '  ' + WW(pad(tk.liquidity, H)) + WW(tk.fdv) + '\n';
+    out += HR(92) + '\n';
+
+    out += `\n ${TL_BG('RISK SIGNALS')}  ${WW('Derived from on-chain DEX data')}\n\n`;
+    out += ' ' + LBL(pad('LEVEL', 12)) + LBL(pad('SIGNAL', 28)) + LBL('DETAIL') + '\n';
+    out += HR(68) + '\n';
+    (tk.riskSignals || []).forEach(rr => {
+      const badge =
+        rr.level === 'HIGH'   ? RED_BG('HIGH  ') :
+        rr.level === 'MEDIUM' ? YEL_BG('MEDIUM') : GRN_BG('LOW   ');
+      out += ' ' + badge + '  ' + W(pad(rr.label, 28)) + WW(rr.detail) + '\n';
     });
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
+    out += HR(92) + '\n';
 
-    // Top holders
-    out += '\n ' + Y(' TOP HOLDERS') + '\n\n';
-    const HL = { rank: 7, addr: 16, label: 22, pct: 7 };
-    out += ' ' + LBL(pad('RANK', HL.rank)) + LBL(pad('ADDRESS', HL.addr)) + LBL(pad('LABEL', HL.label)) + LBL(pad('PCT', HL.pct)) + LBL('STAKE BAR') + '\n';
-    out += SEP(' ' + '─'.repeat(70)) + '\n';
-    tk.topHolders.forEach(h => {
-      const bLen = Math.round(h.pct * 2);
-      out += ' ' + WW(pad('#' + h.rank, HL.rank)) + C(pad(h.address, HL.addr)) + WW(pad(h.label, HL.label)) + Y(pad(h.pct + '%', HL.pct)) + Y('█'.repeat(bLen)) + C('░'.repeat(Math.max(0, 16 - bLen))) + '\n';
+    out += `\n ${TL_BG('DEX LIQUIDITY POOLS')}  ${WW((tk.dexPools?.length || 0) + ' pairs via DexScreener')}\n\n`;
+    out += ' ' + LBL(pad('DEX', 16)) + LBL(pad('PAIR', 20)) + LBL(pad('LIQUIDITY', 18)) + LBL('24H VOLUME') + '\n';
+    out += HR(68) + '\n';
+    (tk.dexPools || []).forEach(p => {
+      out += ' ' + W(pad(p.dex, 16)) + WW(pad(p.pair, 20)) + G(pad(p.tvl, 18)) + C(p.volume) + '\n';
     });
-    out += SEP('\n ' + '─'.repeat(90)) + '\n';
-
-    // DEX pools
-    out += '\n ' + Y(' DEX POOLS') + '\n\n';
-    const PL = { dex: 13, pair: 14, tvl: 14 };
-    out += ' ' + LBL(pad('DEX', PL.dex)) + LBL(pad('PAIR', PL.pair)) + LBL(pad('TVL', PL.tvl)) + LBL('VOLUME') + '\n';
-    out += SEP(' ' + '─'.repeat(52)) + '\n';
-    tk.dexPools.forEach(p => {
-      out += ' ' + W(pad(p.dex, PL.dex)) + WW(pad(p.pair, PL.pair)) + G(pad(p.tvl, PL.tvl)) + C(p.volume) + '\n';
-    });
-
-    tokInner.setContent(out);
-    tokInner.height = 65;
+    out += `\n ${GRY('Details:  dexscreener.com/solana/' + tk.mint)}\n`;
+    tokBox.setContent(out);
+    tokBox.height = Math.max(34, 24 + (tk.riskSignals?.length || 0) + (tk.dexPools?.length || 0) + 6);
   }
-  buildTokenTab();
 
-  // ════════════════════════════════════════════
-  // F5 NEWS
-  // ════════════════════════════════════════════
-  const tabNews = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabNews);
+  async function loadToken(mintOrSymbol) {
+    tokenQuery = mintOrSymbol; tokenLoading = true; tokenError = null;
+    buildTokenTab(); screen.render();
+    try {
+      await loadTokenData(mintOrSymbol);
+      tokenLoading = false;
+    } catch (e) {
+      tokenLoading = false;
+      tokenError = e.message.substring(0, 80);
+    }
+    buildTokenTab(); tokScroll.setScrollPerc(0); screen.render();
+  }
 
-  const newsScroll = makeScroll(tabNews, { top: 0, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(newsScroll);
-  const newsInner = blessed.box({ parent: newsScroll, tags: false, width: '100%', style: { bg: 'black' } });
+  // ══════════════════════════════════════════════════════════
+  // F5  NEWS
+  // ══════════════════════════════════════════════════════════
+  const tabNews    = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  const newsScroll = mkScroll(tabNews, { top: 0, left: 0, right: 0, bottom: 0 });
+  const newsBox    = mkBox(newsScroll, { width: '100%-2' });
 
   function buildNewsTab() {
-    const tagBg = { WHALE: chalk.bgCyan.black, SWAP: chalk.bgMagenta.black, DATA: chalk.bgBlue.white,
-                    SOCIAL: chalk.bgWhite.black, DEFI: chalk.bgGreen.black, NEW: chalk.bgYellow.black, CEX: chalk.bgRed.white };
     let out = '';
-    out += Y(' TERMINAL NEWS & SIGNALS') + WW('  — ' + DATA.news.length + ' items · Sorted by recency') + '\n';
-    out += SEP(' ' + '═'.repeat(100)) + '\n\n';
-    out += ' ' + LBL(pad('TIME', 7)) + LBL(pad('TAG', 10)) + LBL(pad('SOURCE', 14)) + LBL('  HEADLINE') + '\n';
-    out += SEP(' ' + '─'.repeat(100)) + '\n';
+    out += OB(' TERMINAL NEWS & SIGNALS') + `  ${WW(DATA.news.length + ' items')}\n`;
+    out += HR(98) + '\n\n';
+    out += ' ' + LBL(pad('TIME', 7)) + LBL(pad('TAG', 10)) + LBL(pad('SOURCE', 14)) + LBL('HEADLINE') + '\n';
+    out += HR(98) + '\n';
     DATA.news.forEach(n => {
-      const bg   = tagBg[n.tag] || chalk.bgWhite.black;
-      const prio = n.priority === 'high' ? R('●') : n.priority === 'medium' ? Y('○') : WW('·');
-      out += ' ' + WW(pad(n.time, 7)) + bg(' ' + pad(n.tag, 7) + ' ') + '  ' + C(pad(n.source, 13)) + prio + '  ' + WW(n.text) + '\n';
-      out += SEP(' ' + '─'.repeat(100)) + '\n';
+      const tagBgMap = {
+        WHALE: '{#004488-bg}{white-fg}', SWAP: '{#440077-bg}{white-fg}',
+        DATA:  '{#004466-bg}{white-fg}', SOCIAL: '{#333333-bg}{white-fg}',
+        DEFI:  '{#004422-bg}{white-fg}', NEW: '{#664400-bg}{white-fg}',
+        CEX:   '{#440000-bg}{white-fg}',
+      };
+      const bg   = tagBgMap[n.tag] || '{#222222-bg}{white-fg}';
+      const prio = n.priority === 'high' ? DN('*') : n.priority === 'medium' ? Y('o') : GRY('.');
+      out += ' ' + WW(pad(n.time, 7)) + `${bg} ${pad(n.tag || '', 7)} {/}  ` + C(pad(n.source, 13)) + prio + '  ' + WW(n.text) + '\n';
+      out += HR(98) + '\n';
     });
-    newsInner.setContent(out);
-    newsInner.height = DATA.news.length * 2 + 8;
+    newsBox.setContent(out);
+    newsBox.height = DATA.news.length * 2 + 8;
   }
-  buildNewsTab();
 
-  // ════════════════════════════════════════════
-  // F6 LIVE
-  // ════════════════════════════════════════════
-  const tabLive = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabLive);
+  // ══════════════════════════════════════════════════════════
+  // F6  LIVE
+  // ══════════════════════════════════════════════════════════
+  const tabLive = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  blessed.text({ parent: tabLive, top: 0, left: 1, tags: true, style: BOX,
+    content: `{#00FF88-fg}LIVE MODE{/}  {white-fg}Streaming on-chain events  │  mainnet-beta{/}` });
 
-  blessed.text({ parent: tabLive, top: 0, left: 1, tags: true,
-    content: `{red-fg}● LIVE MODE{/}  {white-fg}— Streaming all on-chain events · mainnet-beta{/}` });
-
-  const liveHero = blessed.box({ parent: tabLive, top: 1, left: 0, right: 0, height: 4,
-    tags: true, style: { bg: 'black' }, border: { type: 'line', fg: 'yellow' }
-  });
-  liveHero.setContent(
-    ' ' + tC(pad('STREAMING ASSET', 28)) + tC(pad('CURRENT PRICE', 24)) + tC('STATUS') + '\n' +
-    ' ' + tY(tW(pad('SOL / USD', 28))) + tG(tW(pad('$142.37', 24))) + tG('● CONNECTED — mainnet-beta') + '\n' +
-    ' ' + tWW('All DEX activity · whale alerts · snipes · new tokens')
-  );
+  const liveHero = blessed.box({ parent: tabLive, top: 1, left: 0, right: 0, height: 4, tags: true, style: BOX, border: BCYAN });
+  function updateLiveHero() {
+    const sol = DATA.market.find(m => m.symbol === 'SOL');
+    liveHero.setContent(
+      `\n {#00FFFF-fg}${pad('ASSET', 28)}PRICE              STATUS{/}\n` +
+      ` {#FFD700-fg}{bold}${pad('SOL / USD', 28)}{/}` +
+      `{#00FF88-fg}{bold}${pad(sol ? fmtPrice(sol.price) : '...', 20)}{/}` +
+      `{#00FF88-fg}CONNECTED  mainnet-beta{/}`
+    );
+  }
+  updateLiveHero();
 
   const liveFull = contrib.log({
     parent: tabLive, top: 5, left: 0, right: 0, bottom: 0,
-    fg: 'white', tags: true,
-    border: { type: 'line', fg: 'yellow' },
-    label: ' LIVE TX STREAM — ↑↓ to scroll ',
-    style: { bg: 'black' },
+    fg: 'white', tags: true, style: BOX, border: BCYAN,
+    label: ' {#FFD700-fg}LIVE TX STREAM{/} ',
     scrollable: true, mouse: true,
-    scrollbar: { ch: '│', style: { fg: 'yellow' } }
+    scrollbar: { ch: '│', style: { fg: '#00FFFF' } },
   });
-  tabScrollables.push(null); // F6 uses contrib.log which handles its own scroll
 
-  // ════════════════════════════════════════════
-  // F7 ALERTS
-  // ════════════════════════════════════════════
-  const tabAlerts = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabAlerts);
-
-  const altScroll = makeScroll(tabAlerts, { top: 0, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(altScroll);
-  const altInner = blessed.box({ parent: altScroll, tags: false, width: '100%', style: { bg: 'black' } });
+  // ══════════════════════════════════════════════════════════
+  // F7  ALERTS
+  // ══════════════════════════════════════════════════════════
+  const tabAlerts = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  const altScroll = mkScroll(tabAlerts, { top: 0, left: 0, right: 0, bottom: 0 });
+  const altBox    = mkBox(altScroll, { width: '100%-2' });
 
   function buildAlertsTab() {
-    const triggered = DATA.alerts.filter(a => a.triggered).length;
-    const active    = DATA.alerts.filter(a => !a.triggered).length;
+    const fired  = DATA.alerts.filter(a => a.triggered).length;
+    const active = DATA.alerts.filter(a => !a.triggered).length;
     let out = '';
-    out += Y(' SMART ALERTS') + WW('  — Configured triggers · Auto-fire on conditions') + '\n';
-    out += SEP(' ' + '═'.repeat(90)) + '\n\n';
-    out += ' ' + WW('TOTAL: ') + Y(String(DATA.alerts.length)) + '     ' + G('● ACTIVE: ' + active) + '     ' + R('● TRIGGERED: ' + triggered) + '\n';
-    out += ' ' + WW('Alerts fire automatically in real-time. Use  st alerts add SOL>150  to create new alert.') + '\n';
-    out += SEP('\n ' + '─'.repeat(90)) + '\n\n';
-
-    const AL = { id: 9, tok: 8, cond: 26, created: 18, status: 10 };
-    out += ' ' + LBL(pad('ID', AL.id)) + LBL(pad('TOKEN', AL.tok)) + LBL(pad('CONDITION', AL.cond)) + LBL(pad('CREATED', AL.created)) + LBL(pad('STATUS', AL.status)) + LBL('FIRED AT') + '\n';
-    out += SEP(' ' + '─'.repeat(85)) + '\n';
+    out += OB(' SMART ALERTS') + `  ${WW('Configured price triggers')}\n`;
+    out += HR(86) + '\n\n';
+    out += ` ${WW('TOTAL: ')}${C(String(DATA.alerts.length))}     ${G('ACTIVE: ' + active)}     ${DN('TRIGGERED: ' + fired)}\n\n`;
+    out += ' ' + LBL(pad('ID', 9)) + LBL(pad('TOKEN', 8)) + LBL(pad('CONDITION', 26)) + LBL(pad('CREATED', 18)) + LBL(pad('STATUS', 12)) + LBL('FIRED AT') + '\n';
+    out += HR(82) + '\n';
     DATA.alerts.forEach(a => {
-      const badge = a.status === 'ACTIVE' ? chalk.bgGreen.black(' ACTIVE  ') : chalk.bgRed.white(' FIRED   ');
-      out += ' ' + WW(pad(a.id, AL.id)) + W(pad(a.token, AL.tok)) + WW(pad(a.condition, AL.cond)) + WW(pad(a.created, AL.created)) + badge + '  ' + (a.triggeredAt ? R(a.triggeredAt) : DIM('—')) + '\n';
+      const badge = a.status === 'ACTIVE' ? GRN_BG('ACTIVE') : RED_BG('FIRED');
+      out += ' ' + WW(pad(a.id, 9)) + W(pad(a.token, 8)) + WW(pad(a.condition, 26)) + WW(pad(a.created, 18)) + badge + '  ' + (a.triggeredAt ? DN(a.triggeredAt) : GRY('-')) + '\n';
     });
-
-    altInner.setContent(out);
-    altInner.height = DATA.alerts.length + 12;
+    altBox.setContent(out);
+    altBox.height = DATA.alerts.length + 10;
   }
-  buildAlertsTab();
 
-  // ════════════════════════════════════════════
-  // F8 NETWORK — DNS CLI data stats
-  // ════════════════════════════════════════════
-  const tabNetwork = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, style: { bg: 'black' } });
-  tabContainers.push(tabNetwork);
+  // ══════════════════════════════════════════════════════════
+  // F8  NETWORK
+  // ══════════════════════════════════════════════════════════
+  const tabNetwork = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+  const netScroll  = mkScroll(tabNetwork, { top: 0, left: 0, right: 0, bottom: 0 });
+  const netBox     = mkBox(netScroll, { width: '100%-2' });
 
-  const netScroll = makeScroll(tabNetwork, { top: 0, left: 0, right: 0, bottom: 0 });
-  tabScrollables.push(netScroll);
-  const netInner = blessed.box({ parent: netScroll, tags: false, width: '100%', style: { bg: 'black' } });
+  let netLoading = true, netError = null;
 
   function buildNetworkTab() {
-    const ep  = NS.epoch;
-    const tps = NS.tps;
-    const bt  = NS.blocktime;
-    const sp  = NS.supply;
-    const sd  = NS.stakeData;
-    let out   = '';
+    let out = '';
+    out += OB(' NETWORK STATS') + `  ${WW('Solana blockchain  │  Real-time RPC data')}\n`;
+    out += HR(88) + '\n\n';
+    if (netLoading) { out += loadingBanner('Fetching epoch, TPS, validators...'); netBox.setContent(out); netBox.height = 12; return; }
+    if (netError)   { out += errorBanner(netError); netBox.setContent(out); netBox.height = 12; return; }
 
-    out += Y(' NETWORK STATS') + WW('  — Solana blockchain real-time network data') + '\n';
-    out += SEP(' ' + '═'.repeat(92)) + '\n\n';
+    const { epoch: ep, tps, blocktime: bt, supply: sp, stakeData: sd, validators } = DATA.networkStats;
 
-    // ── EPOCH ─────────────────────────────────
-    out += ' ' + chalk.bgYellow.black(' EPOCH ') + ' ' + W('Current Epoch: ' + ep.current) + '   ' + LBL('Time Left: ') + C(ep.timeLeft) + '   ' + LBL('Slots Done: ') + WW(ep.slotsDone.toLocaleString() + ' / ' + ep.slotsTotal.toLocaleString()) + '\n';
-    out += '\n ' + progressBar(ep.progress, 50) + '  ' + Y(ep.progress.toFixed(1) + '%') + '\n';
-    out += ' ' + LBL('Started: ') + WW(ep.startTime) + '   ' + LBL('Ends: ') + WW(ep.endTime) + '\n';
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
+    // ── EPOCH ──
+    out += ` ${TL_BG('EPOCH')}  ${W('Epoch ' + ep.current)}   ${LBL('Time left:')} ${C(ep.timeLeft)}   ${LBL('Slots:')} ${WW((ep.slotsDone || 0).toLocaleString() + ' / ' + (ep.slotsTotal || 0).toLocaleString())}\n\n`;
+    out += ' ' + progressBar(ep.progress, 52) + `  ${G(ep.progress.toFixed(1) + '%')}\n`;
+    out += ` ${LBL('Absolute slot:')} ${WW((ep.absoluteSlot || 0).toLocaleString())}   ${GRY('Est. end: ' + ep.endTime)}\n`;
+    out += HR(88) + '\n\n';
 
-    // ── TPS ────────────────────────────────────
-    out += ' ' + chalk.bgGreen.black(' TPS ') + '  ' + WW('SOLANA NETWORK TPS — Last 1 Hour') + '\n\n';
-    const [TC1, TC2, TC3, TC4] = [20, 20, 20, 18];
-    // Stats row
-    out += ' ' + LBL(pad('CURRENT', TC1)) + LBL(pad('AVERAGE', TC2)) + LBL(pad('MAX', TC3)) + LBL('MIN') + '\n';
-    out += ' ' + G(pad(tps.current + ' TPS', TC1)) + C(pad(tps.average + ' TPS', TC2)) + Y(pad(tps.maximum + ' TPS', TC3)) + R(tps.minimum + ' TPS') + '\n\n';
-
-    // Proper line chart
-    const tpsVals   = tps.history.map(h => h.value);
-    const tpsLabels = tps.history.map((h, i) => (i % 3 === 0 ? h.ago.replace(' mins ago','m') : '  '));
-    out += asciiLineChart(tpsVals, tpsLabels, {
-      height: 7, width: 52, axisW: 7,
-      colFn: chalk.greenBright, axisFn: chalk.cyan, labelFn: chalk.white
-    });
-    out += '\n';
-    // Data table below chart
-    out += ' ' + LBL(pad('TIME AGO', 14)) + LBL(pad('TPS', 8)) + LBL('TREND') + '\n';
-    out += SEP(' ' + '─'.repeat(55)) + '\n';
+    // ── TPS CHART ── solid green bars
+    out += ` ${TL_BG('TPS')}  ${WW('Transactions per second  │  Recent performance samples')}\n\n`;
+    const T = 20;
+    out += ' ' + LBL(pad('CURRENT', T)) + LBL(pad('AVERAGE', T)) + LBL(pad('MAX', T)) + LBL('MIN') + '\n';
+    out += ' ' + G(pad(tps.current + ' TPS', T)) + C(pad(tps.average + ' TPS', T)) + Y(pad(tps.maximum + ' TPS', T)) + DN(tps.minimum + ' TPS') + '\n\n';
+    out += barFillChart(
+      tps.history.map(h => h.value),
+      tps.history.map(h => h.ago.replace(' mins ago', 'm')),
+      { height: 10, colW: 3, gap: 0, axisW: 6, colTag: '#00FF88-fg', axisTag: '#00FFFF-fg' }
+    ) + '\n';
+    out += ' ' + LBL(pad('INTERVAL', 14)) + LBL(pad('TPS', 10)) + LBL('DELTA') + '\n';
+    out += HR(44) + '\n';
     tps.history.forEach((h, i) => {
-      const prev  = i > 0 ? tps.history[i-1].value : h.value;
-      const trend = h.value > prev ? G('▲') : h.value < prev ? R('▼') : WW('─');
-      const delta = i > 0 ? (h.value - prev > 0 ? G('+' + (h.value - prev)) : R(String(h.value - prev))) : WW(' —');
-      out += ' ' + WW(pad(h.ago, 14)) + G(pad(String(h.value), 8)) + trend + '  ' + delta + '\n';
+      const prev  = i > 0 ? tps.history[i - 1].value : h.value;
+      const delta = i > 0 ? h.value - prev : 0;
+      const dt    = delta > 0 ? G('+' + delta) : delta < 0 ? DN(String(delta)) : GRY('─');
+      out += ' ' + WW(pad(h.ago, 14)) + G(pad(String(h.value), 10)) + dt + '\n';
     });
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
+    out += HR(88) + '\n\n';
 
-    // ── BLOCKTIME ──────────────────────────────
-    out += ' ' + chalk.bgCyan.black(' BLOCKTIME ') + '  ' + WW('BLOCK TIME — Last 1 Hour') + '\n\n';
-    out += ' ' + LBL(pad('CURRENT', TC1)) + LBL(pad('AVERAGE', TC2)) + LBL(pad('MAX', TC3)) + LBL('MIN') + '\n';
-    out += ' ' + G(pad(bt.current + ' ms', TC1)) + C(pad(bt.average + ' ms', TC2)) + Y(pad(bt.maximum + ' ms', TC3)) + R(bt.minimum + ' ms') + '\n\n';
-
-    // Proper line chart
-    const btVals   = bt.history.map(h => parseFloat(h.value));
-    const btLabels = bt.history.map((h, i) => (i % 3 === 0 ? h.ago.replace(' mins ago','m') : '  '));
-    out += asciiLineChart(btVals, btLabels, {
-      height: 7, width: 52, axisW: 8,
-      colFn: chalk.cyanBright, axisFn: chalk.cyan, labelFn: chalk.white
+    // ── BLOCKTIME CHART ── solid cyan bars
+    out += ` ${TL_BG('BLOCKTIME')}  ${WW('Block time in milliseconds  │  Recent samples')}\n\n`;
+    out += ' ' + LBL(pad('CURRENT', T)) + LBL(pad('AVERAGE', T)) + LBL(pad('MAX', T)) + LBL('MIN') + '\n';
+    out += ' ' + G(pad(bt.current + ' ms', T)) + C(pad(bt.average + ' ms', T)) + Y(pad(bt.maximum + ' ms', T)) + DN(bt.minimum + ' ms') + '\n\n';
+    out += barFillChart(
+      bt.history.map(h => parseFloat(h.value)),
+      bt.history.map(h => h.ago.replace(' mins ago', 'm')),
+      { height: 10, colW: 3, gap: 0, axisW: 8, colTag: '#00FFFF-fg', axisTag: '#00FFFF-fg' }
+    ) + '\n';
+    bt.history.forEach(h => {
+      out += ' ' + WW(pad(h.ago, 14)) + C(h.value + ' ms') + '\n';
     });
-    out += '\n';
-    // Data table
-    out += ' ' + LBL(pad('TIME AGO', 14)) + LBL(pad('BLOCKTIME', 14)) + LBL('TREND') + '\n';
-    out += SEP(' ' + '─'.repeat(55)) + '\n';
-    bt.history.forEach((h, i) => {
-      const prev  = i > 0 ? parseFloat(bt.history[i-1].value) : parseFloat(h.value);
-      const curr  = parseFloat(h.value);
-      const trend = curr < prev ? G('▲ faster') : curr > prev ? R('▼ slower') : WW('─ stable');
-      out += ' ' + WW(pad(h.ago, 14)) + C(pad(h.value, 14)) + trend + '\n';
-    });
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
+    out += HR(88) + '\n\n';
 
-    // ── VALIDATORS ─────────────────────────────
-    out += ' ' + chalk.bgMagenta.black(' VALIDATORS ') + '  ' + WW('TOP 10 SOLANA VALIDATORS BY STAKE') + '\n\n';
-    const VL = { rank: 5, name: 22, stake: 12, commission: 13 };
-    out += ' ' + LBL(pad('#', VL.rank)) + LBL(pad('VALIDATOR', VL.name)) + LBL(pad('STAKE', VL.stake)) + LBL(pad('COMMISSION', VL.commission)) + LBL('DELEGATORS') + '\n';
-    out += SEP(' ' + '─'.repeat(68)) + '\n';
-    NS.validators.forEach(v => {
-      const commColor = v.commission === '100%' ? chalk.redBright : v.commission === '0%' ? chalk.greenBright : chalk.yellow;
-      out += ' ' + WW(pad(String(v.rank) + '.', VL.rank)) + W(pad(v.name, VL.name)) + G(pad(v.stake + ' SOL', VL.stake)) + commColor(pad(v.commission, VL.commission)) + C(v.delegators) + '\n';
+    // ── VALIDATORS ──
+    out += ` ${TL_BG('VALIDATORS')}  ${WW('Top 10 by stake  │  getVoteAccounts')}\n\n`;
+    out += ' ' + LBL(pad('#', 5)) + LBL(pad('VOTE KEY', 22)) + LBL(pad('STAKE (SOL)', 18)) + LBL('COMMISSION') + '\n';
+    out += HR(60) + '\n';
+    (validators || []).forEach(v => {
+      const cc = v.commission === '100%' ? DN(v.commission) : v.commission === '0%' ? G(v.commission) : Y(v.commission);
+      out += ' ' + WW(pad(v.rank + '.', 5)) + C(pad(v.name, 22)) + G(pad(v.stake, 18)) + cc + '\n';
     });
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
+    out += HR(88) + '\n\n';
 
-    // ── SOL SUPPLY ─────────────────────────────
-    out += ' ' + chalk.bgBlue.white(' SOL SUPPLY ') + '  ' + WW('SOLANA SUPPLY & STAKE DATA') + '\n\n';
-    out += ' ' + LBL(pad('Circulating Supply:', 22)) + C(pad(sp.circulating + 'M SOL', 16)) + progressBar(sp.circulatingPct, 28) + '  ' + Y(sp.circulatingPct + '%') + '\n';
-    out += ' ' + LBL(pad('Active Staked SOL:',  22)) + G(pad(sp.staked + 'M SOL', 16))      + progressBar(sp.stakedPct, 28)      + '  ' + Y(sp.stakedPct + '%') + '\n';
-    out += ' ' + LBL(pad('Total SOL Supply:',   22)) + W(sp.total + 'M SOL') + '\n\n';
-    const [SC1, SC2, SC3] = [22, 22, 20];
-    out += ' ' + LBL(pad('Epoch:', SC1)) + WW(pad(String(sp.epoch), SC2)) + LBL('Inflation Rate:') + '\n';
-    out += ' ' + Y(pad(String(sp.epoch), SC1)) + LBL(pad('Staking APY:', SC2)) + R(sp.inflationRate + '%') + '\n';
-    out += ' ' + LBL(pad('', SC1)) + G(sp.stakingApy + '%') + '\n';
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
+    // ── SOL SUPPLY ──
+    out += ` ${TL_BG('SOL SUPPLY')}  ${WW('via getSupply  │  mainnet-beta')}\n\n`;
+    out += ` ${LBL(pad('Circulating:', 22))}${C(pad(sp.circulating + 'M SOL', 16))} ${progressBar(sp.circulatingPct, 28)} ${Y(sp.circulatingPct + '%')}\n`;
+    out += ` ${LBL(pad('Est. Staked:', 22))}${G(pad(sp.staked + 'M SOL', 16))} ${progressBar(sp.stakedPct, 28)} ${Y(sp.stakedPct + '%')}\n`;
+    out += ` ${LBL(pad('Total supply:', 22))}${W(sp.total + 'M SOL')}\n\n`;
+    out += ` ${LBL(pad('Epoch:', 22))}${WW(String(sp.epoch))}    ${LBL('Inflation:')} ${DN(sp.inflationRate + '%')}\n`;
+    out += ` ${LBL(pad('Est. Staking APY:', 22))}${G(sp.stakingApy + '%')}\n`;
+    out += HR(88) + '\n\n';
 
-    // ── STAKE DATA ─────────────────────────────
-    out += ' ' + chalk.bgYellow.black(' STAKE DATA ') + '  ' + WW('SOLANA NETWORK STAKING STATISTICS') + '\n\n';
-    const sArr = [
-      ['TOTAL STAKED',   sd.totalStaked + ' (' + sd.totalStakedUsd + ')'],
-      ['ACTIVE STAKERS', sd.activeStakers],
-      ['UNIQUE WALLETS', sd.uniqueWallets],
-      ['BIGGEST STAKE',  sd.biggestStake],
-      ['MEDIAN STAKE',   sd.medianStake],
-      ['MEAN STAKE',     sd.meanStake],
-      ['FILTER APY',     sd.filterApy],
-      ['UPDATED',        sd.updated],
-    ];
-    sArr.forEach(([lbl, val]) => {
-      out += ' ' + LBL(pad(lbl + ':', 20)) + WW(val) + '\n';
+    // ── STAKE DATA ──
+    out += ` ${TL_BG('STAKE DATA')}\n\n`;
+    [['Total Est. Staked', sd.totalStaked], ['Est. Staking APY', sd.filterApy], ['Last updated', sd.updated]].forEach(([l, v]) => {
+      out += ` ${LBL(pad(l + ':', 24))}${WW(v)}\n`;
     });
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
+    out += `\n ${GRY('Last refreshed: ' + new Date().toLocaleString())}\n`;
 
-    // ── STAKE GRAPH ────────────────────────────
-    out += ' ' + chalk.bgGreen.black(' STAKE GRAPH ') + '  ' + WW('STAKED SOL OVER EPOCHS') + '\n\n';
-
-    // Line chart of epoch stake growth
-    const sgVals   = NS.stakeGraph.map(g => g.sol);
-    const sgLabels = NS.stakeGraph.map((g, i) => {
-      if (i === 0 || i === NS.stakeGraph.length - 1) return String(g.epoch);
-      if (i % 3 === 0) return String(g.epoch);
-      return '    ';
-    });
-    out += asciiLineChart(sgVals, sgLabels, {
-      height: 7, width: 52, axisW: 8,
-      colFn: chalk.greenBright, axisFn: chalk.cyan, labelFn: chalk.white
-    });
-    out += '\n';
-    // Compact epoch table below chart
-    const sgMax = Math.max(...NS.stakeGraph.map(g => g.sol));
-    out += ' ' + LBL(pad('EPOCH', 9)) + LBL(pad('STAKED SOL', 16)) + LBL('SHARE OF MAX') + '\n';
-    out += SEP(' ' + '─'.repeat(55)) + '\n';
-    NS.stakeGraph.forEach(g => {
-      const isCurr = g.epoch === ep.current;
-      const pct    = (g.sol / sgMax * 100).toFixed(1);
-      const bar    = Math.round(g.sol / sgMax * 16);
-      const rowStr = ' ' + (isCurr ? Y : WW)(pad(String(g.epoch), 9)) +
-                     (isCurr ? Y : G)(pad(g.sol + 'M SOL', 16)) +
-                     (isCurr ? Y : G)('█'.repeat(bar)) + C('░'.repeat(16 - bar)) +
-                     ' ' + WW(pct + '%') + (isCurr ? Y(' ← current') : '') + '\n';
-      out += rowStr;
-    });
-    out += '\n ' + LBL('Range: ') + R('MIN 80.99M') + LBL(' — ') + G('MAX 411.23M SOL') + '\n';
-    out += SEP('\n ' + '─'.repeat(92)) + '\n\n';
-
-    // ── STAKE DISTRIBUTION ─────────────────────
-    out += ' ' + chalk.bgCyan.black(' STAKE DISTRIBUTION ') + '  ' + WW('AVERAGE SOL STAKED SIZES') + '\n\n';
-    const DD = { range: 17, totalSol: 22, stakes: 12, wallets: 11 };
-    out += ' ' + LBL(pad('SOL RANGE', DD.range)) + LBL(pad('TOTAL SOL STAKED', DD.totalSol)) + LBL(pad('NUM STAKES', DD.stakes)) + LBL(pad('WALLETS', DD.wallets)) + LBL('VALIDATORS') + '\n';
-    out += SEP(' ' + '─'.repeat(80)) + '\n';
-    NS.stakeDistribution.forEach(row => {
-      out += ' ' + WW(pad(row.range, DD.range)) + C(pad(row.totalSol, DD.totalSol)) + WW(pad(row.stakes, DD.stakes)) + WW(pad(row.wallets, DD.wallets)) + WW(row.validators) + '\n';
-    });
-    out += '\n ' + DIM('Last updated: ' + new Date().toLocaleString()) + '\n';
-
-    netInner.setContent(out);
-    netInner.height = 150;
+    netBox.setContent(out);
+    netBox.height = 130;
   }
-  buildNetworkTab();
 
-  // ════════════════════════════════════════════
-  // BOTTOM BAR
-  // ════════════════════════════════════════════
-  const cmdHints = {
-    market:  'st market   |   st price <TOKEN>   |   st top',
-    price:   'st price SOL   |   st price BONK',
-    wallet:  'st wallet <ADDRESS>   |   st wallet me',
-    token:   'st token BONK   |   st token <MINT>',
-    news:    'st news   |   st news --filter=whale',
-    live:    'st live SOL   |   st live --all',
-    alerts:  'st alerts   |   st alerts add SOL>150',
-    network: 'dig @100.31.3.72 -p 5353 epoch +short   |   tps   |   blocktime   |   top-validators',
-  };
-  const tabKeys = ['market','price','wallet','token','news','live','alerts','network'];
-
+  // ─────────────────────────────────────────────
+  // BOTTOM BARS
+  // ─────────────────────────────────────────────
+  const hints = [
+    'DexScreener prices  │  30s auto-refresh  │  R=refresh now',
+    'SOL area chart  │  R=refresh',
+    'I=enter wallet address  │  R=refresh  │  arrows=scroll',
+    'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll',
+    'Terminal news & signals  │  arrows=scroll',
+    'Live event stream  │  arrows=scroll',
+    'Smart alerts  │  R=refresh',
+    'Solana RPC stats  │  R=refresh  │  30s auto-refresh',
+  ];
   const cmdBar = blessed.box({
     parent: root, bottom: 1, left: 0, width: '100%', height: 1,
-    tags: true, style: { bg: 'black' },
-    content: `{yellow-fg}▶{/} {white-fg}Type a command or press / to focus...{/}`
+    tags: true, style: BOX,
+    content: `{#00FFFF-fg}▶{/} {white-fg}Connecting to DexScreener and Solana RPC...{/}`,
   });
   const footer = blessed.box({
     parent: root, bottom: 0, left: 0, width: '100%', height: 1,
-    tags: true, style: { bg: 'yellow', fg: 'black' }
+    tags: true, style: { bg: '#003333', fg: 'white' },
   });
 
-  // ════════════════════════════════════════════
-  // TAB SWITCHING
-  // ════════════════════════════════════════════
-  let currentTab = 0;
-  const allTabs = [tabMarket, tabPrice, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork];
+  // ─────────────────────────────────────────────
+  // TAB MANAGEMENT
+  // ─────────────────────────────────────────────
+  let current = 0;
+  const allTabs    = [tabMarket, tabPrice, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork];
   const allScrolls = [mktScroll, priceScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll];
 
   function activateTab(idx) {
-    currentTab = idx;
+    current = idx;
     allTabs.forEach((t, i) => (i === idx ? t.show() : t.hide()));
-
-    // Set active scroll reference for key routing
     activeScroll = allScrolls[idx] || null;
     if (activeScroll) activeScroll.setScrollPerc(0);
 
-    const tabLabels = ['MARKET','PRICE','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK'];
+    const names = ['MARKET','PRICE','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK'];
     let nav = '';
-    tabLabels.forEach((name, i) => {
-      if (i === idx) nav += ` {yellow-bg}{black-fg} F${i+1} {/}{yellow-fg} ${name} {/}`;
-      else           nav += ` {white-bg}{black-fg} F${i+1} {/}{white-fg} ${name} {/}`;
+    names.forEach((n, i) => {
+      nav += i === idx
+        ? ` {#00FF88-bg}{black-fg}{bold} F${i+1} ${n} {/}`       // active: neon green bg
+        : ` {#002222-bg}{#00FFFF-fg} F${i+1} {/}{white-fg} ${n} {/}`;  // inactive: dark teal
     });
     navContent.setContent(nav);
 
-    const fLine = tabLabels.map((n, i) => `{bold}F${i+1}{/} ${n}`).join('  ');
-    footer.setContent(` ${fLine}   {right}↑↓ PgUp/PgDn scroll  ESC QUIT  {bold}SOLANA TERMINAL ◎{/}`);
-    cmdBar.setContent(`{yellow-fg}▶{/} {white-fg}${cmdHints[tabKeys[idx]] || ''}{/}`);
+    const fLine = names.map((n, i) => `{#00FFFF-fg}{bold}F${i+1}{/} {white-fg}${n}{/}`).join('  ');
+    footer.setContent(` {white-fg}${fLine}    I=input  R=refresh  ↑↓=scroll  ESC=quit   SOLANA TERMINAL{/}`);
+    cmdBar.setContent(`{#00FFFF-fg}▶{/} {white-fg}${hints[idx] || ''}{/}`);
     screen.render();
   }
 
@@ -836,39 +845,85 @@ function startDashboard() {
   screen.key(['f8'], () => activateTab(7));
   screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
 
-  activateTab(0);
+  screen.key(['i', 'I'], () => {
+    if (current === 2) {
+      getLineInput(screen, 'Enter Solana wallet address (base58 public key):', addr => {
+        if (addr) loadWallet(addr); else buildWalletTab(); screen.render();
+      });
+    } else if (current === 3) {
+      getLineInput(screen, 'Enter token mint address or symbol (e.g. BONK / WIF / JUP):', val => {
+        if (val) loadToken(val); else buildTokenTab(); screen.render();
+      });
+    }
+  });
 
-  // ════════════════════════════════════════════
-  // LIVE INTERVALS
-  // ════════════════════════════════════════════
-  const typeColors = { SWAP:'cyanBright', BUY:'greenBright', WHALE:'cyan', ALERT:'yellowBright', NEW:'magentaBright' };
-  const typeBadge  = { SWAP:'SWAP ', BUY:'BUY  ', WHALE:'WHALE', ALERT:'ALERT', NEW:'NEW  ' };
+  screen.key(['r', 'R'], () => {
+    if (current === 0 || current === 1) refreshMarket();
+    else if (current === 2 && walletAddr) loadWallet(walletAddr);
+    else if (current === 3 && tokenQuery) loadToken(tokenQuery);
+    else if (current === 7) refreshNetwork();
+  });
 
-  DATA.liveFeed.slice(0, 8).forEach(e => {
-    const col   = chalk[typeColors[e.type] || 'white'];
-    const badge = typeBadge[e.type] || e.type;
-    feedLog.log(`{white-fg}${nowTime()}{/}  ${col(badge)} {white-fg}${e.text.substring(0, 22)}{/}`);
-    liveFull.log(`{white-fg}${nowTime()}{/}  ${col(badge)} {white-fg}${e.text}{/}`);
+  // ─────────────────────────────────────────────
+  // LIVE FEED (sidebar + F6 stream)
+  // ─────────────────────────────────────────────
+  const tBadge = { SWAP: '>> SWAP', BUY: '++ BUY ', WHALE: '** WHALE', ALERT: '!! ALERT', NEW: '** NEW ' };
+  const tColor = { SWAP: '#00FFFF-fg', BUY: '#00FF88-fg', WHALE: '#FFD700-fg', ALERT: '#FF6B6B-fg', NEW: '#00FFFF-fg' };
+
+  DATA.liveFeed.slice(0, 5).forEach(e => {
+    const col = tColor[e.type] || 'white-fg';
+    feedLog.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
+    liveFull.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text}{/}`);
   });
 
   setInterval(() => {
-    const idx   = Math.floor(Math.random() * DATA.liveFeed.length);
-    const e     = DATA.liveFeed[idx];
-    const col   = chalk[typeColors[e.type] || 'white'];
-    const badge = typeBadge[e.type] || e.type;
-
-    feedLog.log(`{white-fg}${nowTime()}{/}  ${col(badge)} {white-fg}${e.text.substring(0, 22)}{/}`);
-    liveFull.log(`{white-fg}${nowTime()}{/}  ${col(badge)} {white-fg}${e.text}{/}`);
-
-    DATA.market[0].price = Math.max(130, DATA.market[0].price + (Math.random() - 0.48) * 0.4);
-    if (currentTab === 0) { buildMarketTable(); buildStatsRow(); }
-
-    refreshTicker();
+    const e   = DATA.liveFeed[Math.floor(Math.random() * DATA.liveFeed.length)];
+    const col = tColor[e.type] || 'white-fg';
+    feedLog.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
+    liveFull.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text}{/}`);
     screen.render();
-  }, 2000);
+  }, 3000);
 
+  // ─────────────────────────────────────────────
+  // DATA LOADERS
+  // ─────────────────────────────────────────────
+  async function refreshMarket() {
+    try {
+      await loadMarketData();
+      refreshTicker(); buildMarketTable(); buildStatsRow(); buildPriceTab();
+      buildGainers(); buildLosers(); updateLiveHero();
+    } catch (e) {
+      mktBox.setContent(errorBanner('Market data: ' + e.message.substring(0, 60)));
+      mktBox.height = 10;
+    }
+    screen.render();
+  }
+
+  async function refreshNetwork() {
+    netLoading = true; netError = null;
+    buildNetworkTab(); screen.render();
+    try {
+      await loadNetworkData();
+      netLoading = false;
+    } catch (e) {
+      netLoading = false;
+      netError = e.message.substring(0, 80);
+    }
+    buildNetworkTab(); screen.render();
+  }
+
+  // ─────────────────────────────────────────────
+  // BOOT SEQUENCE
+  // ─────────────────────────────────────────────
+  activateTab(0);
+  buildNewsTab(); buildAlertsTab();
+  buildMarketTable(); buildStatsRow(); buildNetworkTab();
+  buildWalletTab(); buildTokenTab();
   screen.render();
+
+  Promise.all([refreshMarket(), refreshNetwork()]).then(() => screen.render());
+  setInterval(refreshMarket,  CFG.MARKET_REFRESH_MS);
+  setInterval(refreshNetwork, CFG.NETWORK_REFRESH_MS);
 }
 
-module.exports = { startDashboard };
 module.exports = { startDashboard };
