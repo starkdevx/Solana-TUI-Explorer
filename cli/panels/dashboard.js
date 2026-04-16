@@ -257,14 +257,25 @@ function startDashboard() {
     label: ' {#00FF88-fg}{bold}TOP GAINERS{/} ', tags: true,
     border: BCYAN, style: BOX,
   });
+  function getLineSpark(dataArr, w) {
+    if (!dataArr || !dataArr.length) return '─'.repeat(w);
+    const min = Math.min(...dataArr), max = Math.max(...dataArr), rng = (max-min)||1;
+    const chars = '._-~^';
+    let out = '';
+    for(let i=0; i<w; i++) {
+       const idx = Math.floor(i * dataArr.length / w);
+       const norm = Math.max(0, Math.min(1, (dataArr[idx] - min) / rng));
+       out += chars[Math.floor(norm * 4.99)];
+    }
+    return out;
+  }
+
   function buildGainers() {
-    if (!DATA.topGainers.length) { gainBox.setContent(WW(' loading...')); return; }
+    if (!DATA.topGainers.length) { gainBox.setContent(WW(' No gainers presently')); return; }
     let s = '';
     DATA.topGainers.slice(0, 5).forEach(d => {
-      const bl = Math.max(0, Math.round(Math.min(d.pct / 40 * 10, 10)));
-      s += W(pad(d.symbol, 7)) +
-           `{#00FF88-fg}${'█'.repeat(bl)}{/}{#114422-fg}${'░'.repeat(10 - bl)}{/}` +
-           ' ' + G('+' + d.pct.toFixed(1) + '%') + '\n';
+      const spk = getLineSpark(d.sparkArray, 8);
+      s += W(pad(d.symbol, 10)) + `{#00FF88-fg}${spk}{/}  ` + G('+' + d.pct.toFixed(1) + '%') + '\n';
     });
     gainBox.setContent(s);
   }
@@ -275,13 +286,11 @@ function startDashboard() {
     border: BCYAN, style: BOX,
   });
   function buildLosers() {
-    if (!DATA.topLosers.length) { lossBox.setContent(WW(' loading...')); return; }
+    if (!DATA.topLosers.length) { lossBox.setContent(WW(' No negative pairs')); return; }
     let s = '';
     DATA.topLosers.slice(0, 5).forEach(d => {
-      const bl = Math.max(0, Math.round(Math.min(Math.abs(d.pct) / 15 * 10, 10)));
-      s += W(pad(d.symbol, 7)) +
-           `{#FF6B6B-fg}${'█'.repeat(bl)}{/}{#441122-fg}${'░'.repeat(10 - bl)}{/}` +
-           ' ' + DN(d.pct.toFixed(1) + '%') + '\n';
+      const spk = getLineSpark(d.sparkArray, 8);
+      s += W(pad(d.symbol, 10)) + `{#FF6B6B-fg}${spk}{/}  ` + DN(d.pct.toFixed(1) + '%') + '\n';
     });
     lossBox.setContent(s);
   }
@@ -374,16 +383,42 @@ function startDashboard() {
       const volS   = fmtVol(d.vol);
       const mcapS  = '$' + (d.mcap || '-');
 
-      // Momentum 1-line solid bar graph
+      // Momentum 1-line solid bar graph (REAL historical data)
       let spk = '';
       const c = isUp ? '{#00FF88-fg}' : '{#FF6B6B-fg}';
-      for(let i=0; i<12; i++) {
-        const norm = 0.2 + (i/11)*0.6 + (Math.sin(d.price*i + d.pct)*0.2); 
-        if (norm < 0.2)      spk += ' ';
-        else if (norm < 0.4) spk += '▂';
-        else if (norm < 0.6) spk += '▄';
-        else if (norm < 0.8) spk += '▆';
-        else                 spk += '█';
+      
+      if (d.sparkArray && d.sparkArray.length > 0) {
+        // Map true 24h historical array to 12 chars
+        // Using up to ▆ (5/8 block) so top of cell is ALWAYS empty for padding
+        const src = d.sparkArray;
+        // downsample to 12 points
+        const points = [];
+        for(let i=0; i<12; i++) {
+            const idx = Math.floor(i * src.length / 12);
+            points.push(src[idx]);
+        }
+        const min = Math.min(...points);
+        const max = Math.max(...points);
+        const rng = max - min || 1;
+        
+        points.forEach(v => {
+          const norm = (v - min) / rng;
+          if (norm < 0.2)      spk += '\u2581'; // acts as baseline anchor
+          else if (norm < 0.4) spk += '▂';
+          else if (norm < 0.6) spk += '▄';
+          else if (norm < 0.8) spk += '▅';
+          else                 spk += '▆'; // Cap at ▆ to create built-in vertical spacing
+        });
+      } else {
+        // Fallback smooth curve capped at ▆
+        for(let i=0; i<12; i++) {
+          let norm = isUp ? (0.2 + (i/11)*0.8) : (1.0 - (i/11)*0.8);
+          if (norm < 0.2)      spk += '\u2581';
+          else if (norm < 0.4) spk += '▂';
+          else if (norm < 0.6) spk += '▄';
+          else if (norm < 0.8) spk += '▅';
+          else                 spk += '▆';
+        }
       }
 
       out += ' ' +
@@ -400,52 +435,7 @@ function startDashboard() {
     mktBox.height = DATA.market.length + 5;
   }
 
-  // ══════════════════════════════════════════════════════════
-  // F2  PRICE
-  // ══════════════════════════════════════════════════════════
-  const tabPrice    = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  const priceScroll = mkScroll(tabPrice, { top: 0, left: 0, right: 0, bottom: 0 });
-  const priceBox    = mkBox(priceScroll, { width: '100%-2' });
 
-  function buildPriceTab() {
-    const d = DATA.market.find(m => m.symbol === 'SOL');
-    if (!d) { priceBox.setContent(loadingBanner('Loading SOL price...')); priceBox.height = 10; return; }
-    const isUp   = d.pct > 0;
-    const pctTag = isUp ? `{#00FF88-fg}${fmtPct(d.pct)}{/}` : `{#FF6B6B-fg}${fmtPct(d.pct)}{/}`;
-    let out = '';
-
-    out += OB(' PRICE DETAIL') + `  ${WW('SOL / USD  │  DexScreener  │  All Solana DEXes')}\n`;
-    out += HR(86) + '\n\n';
-
-    const P = [20, 16, 14, 14];
-    out += ' ' + LBL(pad('SYMBOL',      P[0])) + LBL(pad('LAST PRICE', P[1])) + LBL(pad('24H CHANGE', P[2])) + LBL('VOLUME 24H') + '\n';
-    out += ' ' + W(pad('SOL / USD',     P[0])) + `{#00FF88-fg}{bold}${pad(fmtPrice(d.price), P[1])}{/}` +
-           pctTag + ' '.repeat(Math.max(1, P[2] - fmtPct(d.pct).length)) + Y(fmtVol(d.vol)) + '\n';
-    out += ' ' + GRY(pad('Mainnet-beta', P[0])) + GRY(pad('via DexScreener', P[1])) + '\n';
-    out += `\n ${LBL('24H HIGH:')} ${G(fmtPrice(d.high))}    ${LBL('24H LOW:')} ${DN(fmtPrice(d.low))}    ${LBL('MKT CAP:')} ${WW('$' + d.mcap)}\n`;
-    out += HR(86) + '\n';
-
-    // SOL 24h chart — solid filled bars
-    out += `\n ${OB(' SOL / USD  ─  24H PRICE CHART')}  ${GRY('estimated from 24h change')}\n\n`;
-    out += barFillChart(DATA.chartData.y, DATA.chartData.x, {
-      height: 12, colW: 3, gap: 0, axisW: 9,
-      colTag: '#00FF88-fg', axisTag: '#00FFFF-fg',
-    });
-    out += GRY(' Note: full OHLC history requires a paid data API. Chart is estimated.\n');
-    out += HR(86) + '\n';
-
-    // All tokens table
-    out += `\n ${OB(' ALL TOKEN PRICES')}\n\n`;
-    out += ' ' + LBL(pad('SYMBOL', 12)) + LBL(pad('PRICE', 16)) + LBL(pad('24H %', 14)) + LBL('VOLUME') + '\n';
-    out += HR(54) + '\n';
-    DATA.market.forEach(e => {
-      const ec = e.pct > 0 ? `{#00FF88-fg}${fmtPct(e.pct)}{/}` : `{#FF6B6B-fg}${fmtPct(e.pct)}{/}`;
-      out += ' ' + W(pad(e.symbol, 12)) + `{#00FF88-fg}${pad(fmtPrice(e.price), 16)}{/}` +
-             ec + ' '.repeat(Math.max(1, 14 - fmtPct(e.pct).length)) + C(fmtVol(e.vol)) + '\n';
-    });
-    priceBox.setContent(out);
-    priceBox.height = 60;
-  }
 
   // ══════════════════════════════════════════════════════════
   // F3  WALLET
@@ -464,7 +454,7 @@ function startDashboard() {
     if (!walletAddr) {
       out += `\n ${TL_BG('NO WALLET LOADED')}\n\n`;
       out += ` ${WW('Enter a Solana wallet address to view live balances & transactions.')}\n\n`;
-      out += ` ${C('Press')} ${W(' I ')} ${C('to enter a Solana wallet address')}\n\n`;
+      out += ` ${C('Type')} ${W(' i ')} ${C('on your keyboard to enter a Solana wallet address')}\n\n`;
       out += ` ${LBL('Example:  ')}${GRY('7xKkPmVn8RqwZ2jLfBd4uYtX1sCo9HGe5Ap3mNpQ')}\n\n`;
       wltBox.setContent(out); wltBox.height = 16; return;
     }
@@ -556,7 +546,7 @@ function startDashboard() {
     if (!tokenQuery) {
       out += `\n ${TL_BG('NO TOKEN SELECTED')}\n\n`;
       out += ` ${WW('Enter a token mint address or symbol.')}\n\n`;
-      out += ` ${C('Press')} ${W(' I ')} ${C('to search a token')}\n\n`;
+      out += ` ${C('Type')} ${W(' i ')} ${C('on your keyboard to search a token')}\n\n`;
       out += ` ${LBL('Symbols:')}  ${G('BONK')}   ${G('WIF')}   ${G('JUP')}   ${G('SOL')}   ${G('RAY')}\n`;
       out += ` ${LBL('Mint:   ')}  ${GRY('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263')}\n`;
       tokBox.setContent(out); tokBox.height = 16; return;
@@ -795,7 +785,6 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   const hints = [
     'DexScreener prices  │  30s auto-refresh  │  R=refresh now',
-    'SOL area chart  │  R=refresh',
     'I=enter wallet address  │  R=refresh  │  arrows=scroll',
     'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll',
     'Terminal news & signals  │  arrows=scroll',
@@ -817,21 +806,21 @@ function startDashboard() {
   // TAB MANAGEMENT
   // ─────────────────────────────────────────────
   let current = 0;
-  const allTabs    = [tabMarket, tabPrice, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork];
-  const allScrolls = [mktScroll, priceScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll];
+  const allTabs    = [tabMarket, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork];
+  const allScrolls = [mktScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll];
 
   function activateTab(idx) {
     current = idx;
     allTabs.forEach((t, i) => (i === idx ? t.show() : t.hide()));
-    activeScroll = allScrolls[idx] || null;
+    let activeScroll = allScrolls[idx] || null;
     if (activeScroll) activeScroll.setScrollPerc(0);
 
-    const names = ['MARKET','PRICE','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK'];
+    const names = ['MARKET','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK'];
     let nav = '';
     names.forEach((n, i) => {
       nav += i === idx
-        ? ` {#00FF88-bg}{black-fg}{bold} F${i+1} ${n} {/}`       // active: neon green bg
-        : ` {#002222-bg}{#00FFFF-fg} F${i+1} {/}{white-fg} ${n} {/}`;  // inactive: dark teal
+        ? ` {#00FF88-bg}{black-fg}{bold} F${i+1} ${n} {/}`
+        : ` {#002222-bg}{#00FFFF-fg} F${i+1} {/}{white-fg} ${n} {/}`;
     });
     navContent.setContent(nav);
 
@@ -848,7 +837,6 @@ function startDashboard() {
   screen.key(['f5'], () => activateTab(4));
   screen.key(['f6'], () => activateTab(5));
   screen.key(['f7'], () => activateTab(6));
-  screen.key(['f8'], () => activateTab(7));
   screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
 
   screen.key(['i', 'I'], () => {
@@ -864,10 +852,10 @@ function startDashboard() {
   });
 
   screen.key(['r', 'R'], () => {
-    if (current === 0 || current === 1) refreshMarket();
-    else if (current === 2 && walletAddr) loadWallet(walletAddr);
-    else if (current === 3 && tokenQuery) loadToken(tokenQuery);
-    else if (current === 7) refreshNetwork();
+    if (current === 0) refreshMarket();
+    else if (current === 1 && walletAddr) loadWallet(walletAddr);
+    else if (current === 2 && tokenQuery) loadToken(tokenQuery);
+    else if (current === 6) refreshNetwork();
   });
 
   // ─────────────────────────────────────────────
@@ -896,7 +884,7 @@ function startDashboard() {
   async function refreshMarket() {
     try {
       await loadMarketData();
-      refreshTicker(); buildMarketTable(); buildStatsRow(); buildPriceTab();
+      refreshTicker(); buildMarketTable(); buildStatsRow();
       buildGainers(); buildLosers(); updateLiveHero();
     } catch (e) {
       mktBox.setContent(errorBanner('Market data: ' + e.message.substring(0, 60)));

@@ -247,12 +247,51 @@ async function fetchDexTokenPrices(symbols) {
   return result;
 }
 
+const CG_IDS = {
+  SOL: 'solana', BTC: 'bitcoin', ETH: 'ethereum',
+  BONK: 'bonk', WIF: 'dogwifcoin', JUP: 'jupiter-exchange-solana',
+  PYTH: 'pyth-network', RAY: 'raydium', ORCA: 'orca',
+  DRIFT: 'drift-protocol', POPCAT: 'popcat', FARTCOIN: 'fartcoin',
+  TRUMP: 'official-trump'
+};
+let cachedSparklines = {};
+let lastSparkFetch = 0;
+
+async function fetchSparklines() {
+  const now = Date.now();
+  if (now - lastSparkFetch < 120000 && Object.keys(cachedSparklines).length > 0) {
+    return cachedSparklines;
+  }
+  const ids = Object.values(CG_IDS).join(',');
+  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&sparkline=true`;
+  try {
+    const data = await new Promise((resolve, reject) => {
+      https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 8000 }, (res) => {
+        let raw = '';
+        res.on('data', c => raw += c);
+        res.on('end', () => resolve(JSON.parse(raw)));
+      }).on('error', reject).on('timeout', reject);
+    });
+    if (Array.isArray(data)) {
+      data.forEach(c => {
+        const sym = Object.keys(CG_IDS).find(k => CG_IDS[k] === c.id);
+        if (sym && c.sparkline_in_7d?.price) {
+          cachedSparklines[sym] = c.sparkline_in_7d.price.slice(-24); // last 24h
+        }
+      });
+      lastSparkFetch = now;
+    }
+  } catch (e) { /* silently fallback to cache */ }
+  return cachedSparklines;
+}
+
 // ── Unified market fetch ────────────────────────────────────
 async function fetchMarketData() {
-  // Run both sources in parallel
-  const [coinDeskData, dexData] = await Promise.allSettled([
+  // Run both sources + sparklines in parallel
+  const [coinDeskData, dexData, sparkData] = await Promise.allSettled([
     fetchCoinDeskPrices(COINDESK_SYMBOLS),
     fetchDexTokenPrices(DEX_SYMBOLS),
+    fetchSparklines()
   ]);
 
   const cdMarket  = coinDeskData.status  === 'fulfilled' ? coinDeskData.value  : [];
@@ -263,14 +302,18 @@ async function fetchMarketData() {
 
   // Merge: CoinDesk coins first, then DexScreener tokens, in MARKET_SYMBOLS order
   const allData = [...cdMarket, ...dexMarket];
+  const finalSpark = (sparkData.status === 'fulfilled') ? sparkData.value : cachedSparklines;
+  allData.forEach(d => {
+    if (finalSpark[d.symbol]) d.sparkArray = finalSpark[d.symbol];
+  });
   const market  = MARKET_SYMBOLS
     .map(sym => allData.find(m => m.symbol === sym))
     .filter(Boolean);
 
   // Top gainers/losers
   const sorted     = [...market].sort((a, b) => b.pct - a.pct);
-  const topGainers = sorted.slice(0, 5).filter(m => m.pct > 0).map(m => ({ symbol: m.symbol, pct: m.pct }));
-  const topLosers  = [...market].sort((a, b) => a.pct - b.pct).slice(0, 5).filter(m => m.pct < 0).map(m => ({ symbol: m.symbol, pct: m.pct }));
+  const topGainers = sorted.slice(0, 5).filter(m => m.pct > 0).map(m => ({ symbol: m.symbol, pct: m.pct, sparkArray: m.sparkArray }));
+  const topLosers  = [...market].sort((a, b) => a.pct - b.pct).slice(0, 5).filter(m => m.pct < 0).map(m => ({ symbol: m.symbol, pct: m.pct, sparkArray: m.sparkArray }));
 
   // Chart data for F2 price tab (SOL 24h — approximate from pct + high/low)
   const solEntry = market.find(m => m.symbol === 'SOL');
