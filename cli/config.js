@@ -14,6 +14,8 @@ module.exports = {
   COINDESK_BASE:   'https://data-api.coindesk.com',
   COINDESK_MARKET: process.env.COINDESK_MARKET || 'coinbase',
   COINDESK_API_KEY: process.env.COINDESK_API_KEY || '',
+  BIRDEYE_API_KEY:  process.env.BIRDEYE_API_KEY  || '',
+  RUGCHECK_API_KEY: process.env.RUGCHECK_API_KEY || '',
 
   // Major cryptos — fetched from CoinDesk (accurate spot prices in USD)
   COINDESK_SYMBOLS: ['BTC', 'ETH', 'SOL'],

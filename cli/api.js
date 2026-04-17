@@ -9,21 +9,22 @@ const https = require('https');
 const CFG = require('./config');
 const { SOLANA_RPC, DEXSCREENER_BASE, TOKEN_MINTS, TOKEN_NAMES, MARKET_SYMBOLS,
         COINDESK_BASE, COINDESK_MARKET, COINDESK_API_KEY,
-        COINDESK_SYMBOLS, DEX_SYMBOLS } = CFG;
+        COINDESK_SYMBOLS, DEX_SYMBOLS, BIRDEYE_API_KEY, RUGCHECK_API_KEY } = CFG;
 
 // ── Generic HTTPS GET ─────────────────────────────────────
-function httpsGet(url) {
+function httpsGet(url, customHeaders = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
         'User-Agent': 'SolanaTerminal/1.0',
         'Accept':     'application/json',
+        ...customHeaders
       },
       timeout: 12000,
     }, (res) => {
       // Follow redirects
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return resolve(httpsGet(res.headers.location));
+        return resolve(httpsGet(res.headers.location, customHeaders));
       }
       if (res.statusCode !== 200) {
         res.resume();
@@ -45,9 +46,10 @@ function httpsGet(url) {
 function rpcCall(method, params = []) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
+    const rpcUrl = new URL(SOLANA_RPC);
     const options = {
-      hostname: new URL(SOLANA_RPC).hostname,
-      path:     '/',
+      hostname: rpcUrl.hostname,
+      path:     rpcUrl.pathname + rpcUrl.search,
       method:   'POST',
       headers:  {
         'Content-Type':   'application/json',
@@ -432,6 +434,96 @@ async function fetchTokenData(mintOrSymbol, timeframe = '1H') {
     // Silently proceed without historical chart if rate limited
   }
 
+  // Fetch Token Supply and Top Holders via Solana RPC
+  let tokenSupply = 0;
+  let topHolders = [];
+  try {
+    const supplyRes = await rpcCall('getTokenSupply', [mint]);
+    if (supplyRes?.value?.uiAmount) {
+      tokenSupply = supplyRes.value.uiAmount;
+    }
+    const largestRes = await rpcCall('getTokenLargestAccounts', [mint]);
+    if (largestRes?.value?.length) {
+      const topAtas = largestRes.value.slice(0, 10);
+      const ataAddrs = topAtas.map(a => a.address);
+      
+      // Secondary lookup: translate ATAs to base Wallet Addresses
+      let ownerMap = {};
+      try {
+        const accsRes = await rpcCall('getMultipleAccounts', [ataAddrs, { encoding: 'jsonParsed' }]);
+        if (accsRes?.value) {
+            accsRes.value.forEach((acc, i) => {
+                if (acc?.data?.parsed?.info?.owner) {
+                    ownerMap[ataAddrs[i]] = acc.data.parsed.info.owner;
+                }
+            });
+        }
+      } catch (err) {}
+
+      topHolders = topAtas.map((acc, i) => {
+        const amt = acc.uiAmount || 0;
+        const pct = tokenSupply > 0 ? (amt / tokenSupply) * 100 : 0;
+        
+        const rawAddr = ownerMap[acc.address] || acc.address;
+        const shortAddr = rawAddr.length > 12 ? rawAddr.slice(0, 4) + '...' + rawAddr.slice(-4) : rawAddr;
+        return {
+          rank: i + 1,
+          address: shortAddr,
+          amount: amt,
+          pct: pct,
+          value: amt * price,
+        };
+      });
+    }
+  } catch (e) {
+    // Strictly honest fallback: no simulated data allowed.
+    topHolders = [];
+  }
+
+  // Exact Total Holders via Birdeye API
+  let exactHolders = 0;
+  if (BIRDEYE_API_KEY) {
+      try {
+          const beRes = await httpsGet(`https://public-api.birdeye.so/defi/v3/token/market-data?address=${mint}`, {
+              'X-API-KEY': BIRDEYE_API_KEY,
+              'x-chain': 'solana'
+          });
+          if (beRes?.data?.holder) {
+              exactHolders = beRes.data.holder;
+          }
+      } catch (err) {}
+  }
+
+  // ── RugCheck Security Analysis (free public endpoint) ──
+  let rugCheck = null;
+  try {
+    const rcHeaders = { 'Accept': 'application/json' };
+    const rcRes = await httpsGet(
+      `https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`,
+      rcHeaders
+    );
+    if (rcRes && !rcRes.error) {
+      const score = rcRes.score_normalised || 0;
+      let riskLevel = 'GOOD';
+      if (score >= 40) riskLevel = 'DANGER';
+      else if (score >= 10) riskLevel = 'WARN';
+
+      rugCheck = {
+        score:       rcRes.score           || 0,
+        normalised:  score,
+        riskLevel,
+        lpLockedPct: rcRes.lpLockedPct     || 0,
+        tokenType:   rcRes.tokenType       || 'SPL Token',
+        risks:       (rcRes.risks || []).map(r => ({
+          name:        r.name,
+          level:       r.level,   // 'danger' | 'warn' | 'info'
+          description: r.description,
+          score:       r.score,
+        })),
+      };
+    }
+  } catch (e) { /* RugCheck unavailable — proceed */ }
+
   return {
     symbol,
     name,
@@ -440,13 +532,14 @@ async function fetchTokenData(mintOrSymbol, timeframe = '1H') {
     price,
     priceChange24h,
     liquidity:   '$' + fmtVol(totalLiq),
-    holders:     '—',   // DexScreener doesn't expose holders
+    holders:     exactHolders > 0 ? exactHolders.toLocaleString() : '—',
     volume24h:   '$' + fmtVol(totalVol),
     volume7d:    '—',
     marketCap:   '$' + fmtMcap(top.marketCap || top.fdv || 0),
     fdv:         '$' + fmtMcap(top.fdv || 0),
-    supply:      '—',
-    topHolders:  [],    // Would need separate indexer API
+    supply:      tokenSupply ? fmtVol(tokenSupply) : '—',
+    rawSupply:   tokenSupply || 1,
+    topHolders:  topHolders,
     riskSignals,
     dexPools,
     rawPairs: pairs,
@@ -457,6 +550,7 @@ async function fetchTokenData(mintOrSymbol, timeframe = '1H') {
     extVolume,
     extPriceChange,
     socialInfo,
+    rugCheck,
     timeframe,
   };
 }

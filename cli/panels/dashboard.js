@@ -194,22 +194,18 @@ function candleChart(candles, opts = {}) {
   const totalW = n * colW + (gap > 0 ? n * gap - gap : 0);
   
   out += `  {#447766-fg}┌${'─'.repeat(axisW)}┬${'─'.repeat(totalW + 2)}┐{/}\n`;
-
-  const titleStr = ` {#00FFFF-fg}{bold}PRICE HISTORY{/}     {#00FF88-fg}[${timeframe}]{/} `;
-  const titleLen = ` PRICE HISTORY     [${timeframe}] `.length;
-  const padRight = Math.max(0, (totalW + 2) - titleLen);
-
-  out += `  {#447766-fg}│${' '.repeat(axisW)}│{/}${titleStr}${' '.repeat(padRight)}{#447766-fg}│{/}\n`;
   
   if (opts.priceChanges) {
     const fmtP = (p) => p !== undefined ? (p >= 0 ? `{#00FF88-fg}+${p.toFixed(2)}%{/}` : `{#FF6B6B-fg}${p.toFixed(2)}%{/}`) : '—';
     const pcLines = `  {#88AAAA-fg}5M:{/} ${fmtP(opts.priceChanges.m5)}    {#88AAAA-fg}1H:{/} ${fmtP(opts.priceChanges.h1)}    {#88AAAA-fg}6H:{/} ${fmtP(opts.priceChanges.h6)}    {#88AAAA-fg}24H:{/} ${fmtP(opts.priceChanges.h24)}`;
-    const purePcActualLen = pcLines.replace(/\{[\w#-]+\}/g, '').length;
-    const padPc = Math.max(0, (totalW + 2) - purePcActualLen);
-    out += `  {#447766-fg}│${' '.repeat(axisW)}│{/}${pcLines}${' '.repeat(padPc)}{#447766-fg}│{/}\n`;
+    
+    // Calculate padding manually to account for tags correctly
+    const pureLen = pcLines.replace(/\{[\w#\/\-]+\}/g, '').length;
+    const padR = Math.max(0, (totalW + 2) - pureLen);
+    
+    out += `  {#447766-fg}│${' '.repeat(axisW)}│{/}${pcLines}${' '.repeat(padR)}{#447766-fg}│{/}\n`;
+    out += `  {#447766-fg}├${'─'.repeat(axisW)}┼${'─'.repeat(totalW + 2)}┤{/}\n`;
   }
-  
-  out += `  {#447766-fg}├${'─'.repeat(axisW)}┼${'─'.repeat(totalW + 2)}┤{/}\n`;
 
   for (let rfb = height - 1; rfb >= 0; rfb--) {
     const rowVal = lo + (rfb / (height - 1)) * rng;
@@ -308,7 +304,8 @@ function getLineInput(screen, promptText, cb) {
     parent: screen, keys: true, left: 'center', top: 'center',
     width: 60, height: 5, style: BOX,
     border: { type: 'line', fg: '#00FFFF' },
-    label: ` {#FFD700-fg} INPUT REQUIRED {/} `
+    label: ` {#FFD700-fg} INPUT REQUIRED {/} `,
+    tags: true
   });
   blessed.text({ parent: form, top: 0, left: 1, content: promptText, style: BOX });
   const input = blessed.textbox({
@@ -320,6 +317,34 @@ function getLineInput(screen, promptText, cb) {
   screen.append(form);
   input.focus();
   input.readInput(); // CRITICAL: Tells blessed to actually accept keyboard strokes
+  screen.render();
+}
+
+function getSelectionMenu(screen, promptText, options, cb) {
+  const form = blessed.form({
+    parent: screen, keys: true, left: 'center', top: 'center',
+    width: 40, height: options.length + 4, style: BOX,
+    border: { type: 'line', fg: '#00FFFF' },
+    label: ` {#FFD700-fg} ${promptText} {/} `,
+    tags: true
+  });
+
+  const list = blessed.list({
+    parent: form, top: 1, left: 1, right: 1, bottom: 1,
+    keys: true, interactive: true,
+    items: options.map(o => `  ▶  ${o}  `),
+    style: {
+      selected: { bg: '#00FF88', fg: 'black', bold: true },
+      item: { fg: 'white', bg: '#001A0D' }
+    }
+  });
+
+  list.on('select', (el, selected) => { form.destroy(); screen.render(); cb(options[selected]); });
+  list.on('cancel', () =>             { form.destroy(); screen.render(); cb(''); });
+  list.key(['escape', 'q', 'C-c'], () => { form.destroy(); screen.render(); cb(''); });
+
+  screen.append(form);
+  list.focus();
   screen.render();
 }
 
@@ -699,31 +724,32 @@ function startDashboard() {
     }
     if (!tk) return;
 
-    const W1=10, W2=13, W3=10, W4=12, W5=12, W6=12, W7=12;
+    const W1=8,  W2=12, W3=9, W4=10, W5=10, W6=11, W7=10, W8=9;
 
     out += `\n ${TL_BG('TOKEN OVERVIEW')}  ${WW(tk.name + '   Mint: ' + (tk.shortMint || tk.mint || '—'))}\n`;
     
-    out += '  {#447766-fg}┌' + '─'.repeat(W1+1) + '┬' + '─'.repeat(W2+1) + '┬' + '─'.repeat(W3+1) + '┬' + '─'.repeat(W4+1) + '┬' + '─'.repeat(W5+1) + '┬' + '─'.repeat(W6+1) + '┬' + '─'.repeat(W7+1) + '┐{/}\n';
+    out += '  {#447766-fg}┌' + '─'.repeat(W1+1) + '┬' + '─'.repeat(W2+1) + '┬' + '─'.repeat(W3+1) + '┬' + '─'.repeat(W4+1) + '┬' + '─'.repeat(W5+1) + '┬' + '─'.repeat(W6+1) + '┬' + '─'.repeat(W7+1) + '┬' + '─'.repeat(W8+1) + '┐{/}\n';
     out += '  {#447766-fg}│{/} ' + LBL(pad('SYMBOL', W1)) + '{#447766-fg}│{/} ' + LBL(pad('PRICE', W2)) + '{#447766-fg}│{/} ' + LBL(pad('24H %', W3)) 
-           + '{#447766-fg}│{/} ' + LBL(pad('MKT CAP', W4)) + '{#447766-fg}│{/} ' + LBL(pad('FDV', W5)) + '{#447766-fg}│{/} ' + LBL(pad('LIQUIDITY', W6)) + '{#447766-fg}│{/} ' + LBL(pad('VOL 24H', W7)) + '{#447766-fg}│{/}\n';
-    out += '  {#447766-fg}├' + '─'.repeat(W1+1) + '┼' + '─'.repeat(W2+1) + '┼' + '─'.repeat(W3+1) + '┼' + '─'.repeat(W4+1) + '┼' + '─'.repeat(W5+1) + '┼' + '─'.repeat(W6+1) + '┼' + '─'.repeat(W7+1) + '┤{/}\n';
+           + '{#447766-fg}│{/} ' + LBL(pad('MKT CAP', W4)) + '{#447766-fg}│{/} ' + LBL(pad('FDV', W5)) + '{#447766-fg}│{/} ' + LBL(pad('LIQUIDITY', W6)) + '{#447766-fg}│{/} ' + LBL(pad('VOL 24H', W7)) + '{#447766-fg}│{/} ' + LBL(pad('HOLDERS', W8)) + '{#447766-fg}│{/}\n';
+    out += '  {#447766-fg}├' + '─'.repeat(W1+1) + '┼' + '─'.repeat(W2+1) + '┼' + '─'.repeat(W3+1) + '┼' + '─'.repeat(W4+1) + '┼' + '─'.repeat(W5+1) + '┼' + '─'.repeat(W6+1) + '┼' + '─'.repeat(W7+1) + '┼' + '─'.repeat(W8+1) + '┤{/}\n';
     
     const pcStr = tk.priceChange24h >= 0 
       ? `{#00FF88-fg}` + pad('+' + tk.priceChange24h.toFixed(2) + '%', W3) + `{/}` 
       : `{#FF6B6B-fg}` + pad(tk.priceChange24h.toFixed(2) + '%', W3) + `{/}`;
       
-    out += '  {#447766-fg}│{/} ' + W(pad(tk.symbol, W1)) 
+    out += '  {#447766-fg}│{/} ' + W(pad(tk.symbol.substring(0, W1), W1)) 
            + '{#447766-fg}│{/} ' + `{#00FF88-fg}{bold}${pad(fmtPrice(tk.price), W2)}{/}` 
            + '{#447766-fg}│{/} ' + pcStr
            + '{#447766-fg}│{/} ' + W(pad(tk.marketCap, W4)) 
            + '{#447766-fg}│{/} ' + W(pad(tk.fdv || tk.marketCap, W5)) 
            + '{#447766-fg}│{/} ' + WW(pad(tk.liquidity, W6)) 
-           + '{#447766-fg}│{/} ' + C(pad(tk.volume24h, W7)) + '{#447766-fg}│{/}\n';
-    out += '  {#447766-fg}└' + '─'.repeat(W1+1) + '┴' + '─'.repeat(W2+1) + '┴' + '─'.repeat(W3+1) + '┴' + '─'.repeat(W4+1) + '┴' + '─'.repeat(W5+1) + '┴' + '─'.repeat(W6+1) + '┴' + '─'.repeat(W7+1) + '┘{/}\n\n';
+           + '{#447766-fg}│{/} ' + C(pad(tk.volume24h, W7)) 
+           + '{#447766-fg}│{/} ' + W(pad(String(tk.holders), W8)) + '{#447766-fg}│{/}\n';
+    out += '  {#447766-fg}└' + '─'.repeat(W1+1) + '┴' + '─'.repeat(W2+1) + '┴' + '─'.repeat(W3+1) + '┴' + '─'.repeat(W4+1) + '┴' + '─'.repeat(W5+1) + '┴' + '─'.repeat(W6+1) + '┴' + '─'.repeat(W7+1) + '┴' + '─'.repeat(W8+1) + '┘{/}\n\n';
 
     let socCards = [];
     if (tk.socialInfo?.websites?.length) {
-       socCards.push(`{#002222-bg}{#00FFFF-fg} WWW {/} ${W(tk.socialInfo.websites[0].url.replace('https://',''))}`);
+       socCards.push(`{#002222-bg}{#00FFFF-fg} Website {/} ${W(tk.socialInfo.websites[0].url.replace('https://',''))}`);
     }
     if (tk.socialInfo?.socials?.length) {
        tk.socialInfo.socials.forEach(s => {
@@ -741,6 +767,8 @@ function startDashboard() {
       const maxLen = 42; 
       const slicedCandles = tk.historicalCandles.slice(-maxLen);
       
+      out += ` ${TL_BG('PRICE HISTORY')}  ${WW(`Chart Timeframe: [${tokenTimeframe}] (press t to change)`)}\n`;
+
       const chartStr = candleChart(slicedCandles, {
         height: 14, colW: 1, gap: 1, axisW: 9, 
         axisTag: '#00AAAA-fg',
@@ -786,7 +814,7 @@ function startDashboard() {
     const barW = 32;
     const rw = barW + 8; // Right column width
     
-    const padStr = (s, w) => s + ' '.repeat(Math.max(0, w - s.replace(/\{[\w#-]+\}/g, '').length));
+    const padStr = (s, w) => s + ' '.repeat(Math.max(0, w - s.replace(/\{[\w#\/\-]+\}/g, '').length));
 
     const right1a = padStr(GRY(pad('BUYS', cw2)) + GRY('SELLS'), rw);
     const right1b = padStr(G(pad(fmtNum(buys), cw2)) + DN(fmtNum(sells)), rw);
@@ -831,12 +859,79 @@ function startDashboard() {
     });
     out += HR(92) + '\n';
 
+    // ─────────────────────── RUGCHECK SECTION ───────────────────────
+    if (tk.rugCheck) {
+      const rc = tk.rugCheck;
+      const isGood   = rc.riskLevel === 'GOOD';
+      const isDanger = rc.riskLevel === 'DANGER';
+      const isWarn   = rc.riskLevel === 'WARN';
+
+      // Badge colors
+      const badgeBg   = isDanger ? '{#FF0033-bg}{white-fg}' : isWarn ? '{#FF8800-bg}{black-fg}' : '{#00AA44-bg}{white-fg}';
+      const badgeText = isDanger ? '  ⚠  DANGER  ' : isWarn ? '  ⚠  WARN  ' : '  ✓  GOOD  ';
+      const badgeEnd  = '{/}';
+
+      const scoreColor = isDanger ? '{#FF6B6B-fg}' : isWarn ? '{#FFD700-fg}' : '{#00FF88-fg}';
+      const lpColor    = rc.lpLockedPct >= 80 ? '{#00FF88-fg}' : rc.lpLockedPct >= 40 ? '{#FFD700-fg}' : '{#FF6B6B-fg}';
+
+      out += `\n ${TL_BG('RUGCHECK ANALYSIS')}  ${WW('Token security audit via RugCheck.xyz')}\n\n`;
+
+      // Score badge row
+      out += `  ${badgeBg}{bold}${badgeText}{/}${badgeEnd}  `;
+      out += `${scoreColor}Rug Score: ${rc.normalised} / 100{/}   `;
+      const safeLpPct = Math.min(100, Math.max(0, rc.lpLockedPct));
+      out += `${lpColor}LP Locked: ${safeLpPct.toFixed(2)}%{/}\n`;
+
+      const mintStr = rc.hasMint ? RED_BG('YES') : GRN_BG(' NO');
+      const freezeStr = rc.hasFreeze ? RED_BG('YES') : GRN_BG(' NO');
+      
+      const holdPct = rc.creatorBalance > 0 ? (rc.creatorBalance / (tk.rawSupply || 1)) * 100 : 0;
+      const creatorStr = holdPct < 0.01 ? GRN_BG(' SOLD 100% ') : YEL_BG(` HOLDING ${holdPct.toFixed(1)}% `);
+
+      out += `\n  ${LBL('Mintable:')} ${mintStr}   ${LBL('Freezable:')} ${freezeStr}   ${LBL('Creator Balance:')} ${creatorStr}\n\n`;
+
+      if (rc.risks.length === 0) {
+        out += `  {#00FF88-fg}✓ No risk factors detected{/}\n`;
+      } else {
+        // Risk flags table
+        const rw1 = 10, rw2 = 28, rw3 = 36;
+        out += '  {#447766-fg}┌' + '─'.repeat(rw1+1) + '┬' + '─'.repeat(rw2+1) + '┬' + '─'.repeat(rw3+1) + '┐{/}\n';
+        out += '  {#447766-fg}│{/} ' + LBL(pad('SEVERITY', rw1)) + '{#447766-fg}│{/} ' + LBL(pad('RISK NAME', rw2)) + '{#447766-fg}│{/} ' + LBL(pad('DESCRIPTION', rw3)) + '{#447766-fg}│{/}\n';
+        out += '  {#447766-fg}├' + '─'.repeat(rw1+1) + '┼' + '─'.repeat(rw2+1) + '┼' + '─'.repeat(rw3+1) + '┤{/}\n';
+        rc.risks.forEach(r => {
+          const lvl = (r.level || '').toLowerCase();
+          const badge =
+            lvl === 'danger' ? RED_BG('DANGER') :
+            lvl === 'warn'   ? YEL_BG(' WARN ') :
+                               GRN_BG(' INFO ');
+          const nameStr = pad((r.name || '').substring(0, rw2), rw2);
+          const descStr = pad((r.description || '').substring(0, rw3), rw3);
+          const nameColor = lvl === 'danger' ? '{#FF6B6B-fg}' : lvl === 'warn' ? '{#FFD700-fg}' : '{#00FF88-fg}';
+          out += '  {#447766-fg}│{/} ' + badge + ' {#447766-fg}│{/} ' + `${nameColor}${nameStr}{/}` + ' {#447766-fg}│{/} ' + GRY(descStr) + ' {#447766-fg}│{/}\n';
+        });
+        out += '  {#447766-fg}└' + '─'.repeat(rw1+1) + '┴' + '─'.repeat(rw2+1) + '┴' + '─'.repeat(rw3+1) + '┘{/}\n';
+      }
+      out += '\n';
+    }
+
     out += `\n ${TL_BG('DEX LIQUIDITY POOLS')}  ${WW((tk.dexPools?.length || 0) + ' pairs via DexScreener')}\n\n`;
     out += ' ' + LBL(pad('DEX', 16)) + LBL(pad('PAIR', 20)) + LBL(pad('LIQUIDITY', 18)) + LBL('24H VOLUME') + '\n';
     out += HR(68) + '\n';
     (tk.dexPools || []).forEach(p => {
       out += ' ' + W(pad(p.dex, 16)) + WW(pad(p.pair, 20)) + G(pad(p.tvl, 18)) + C(p.volume) + '\n';
     });
+
+    if (tk.topHolders && tk.topHolders.length > 0) {
+      const sumPct = tk.topHolders.reduce((s, h) => s + h.pct, 0);
+      out += `\n ${TL_BG('TOP 10 HOLDERS')}  ${WW(`Top 10 own ${sumPct.toFixed(2)}%`)}\n\n`;
+      out += ' ' + LBL(pad('RANK', 8)) + LBL(pad('ADDRESS', 18)) + LBL(pad('% SHARE', 14)) + LBL(pad('AMOUNT', 16)) + LBL('VALUE (USD)') + '\n';
+      out += HR(68) + '\n';
+      tk.topHolders.forEach(h => {
+        out += ' ' + GRY(pad('#' + h.rank, 8)) + W(pad(h.address, 18)) + G(pad(h.pct.toFixed(2) + '%', 14)) + WW(pad(fmtNum(h.amount), 16)) + C('$' + fmtVol2(h.value)) + '\n';
+      });
+      out += HR(68) + '\n';
+    }
+
     out += `\n ${GRY('Details:  dexscreener.com/solana/' + tk.mint)}\n`;
     tokBox.setContent(out);
     tokBox.height = out.split('\n').length + 2;
@@ -1048,7 +1143,7 @@ function startDashboard() {
     const hints = [
       'DexScreener prices  │  30s auto-refresh  │  R=refresh now',
       'I=enter wallet address  │  R=refresh  │  arrows=scroll',
-      'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll',
+      'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll  │  T=change timeframe',
       'Terminal news & signals  │  arrows=scroll',
       'Live event stream  │  arrows=scroll',
       'Smart alerts  │  R=refresh',
@@ -1123,9 +1218,13 @@ function startDashboard() {
 
   screen.key(['t', 'T'], () => {
     if (current === 2 && tokenQuery && !tokenLoading) {
-      const tfs = ['5M', '1H', '1D'];
-      const nextIdx = (tfs.indexOf(tokenTimeframe) + 1) % 3;
-      loadToken(null, tfs[nextIdx]);
+      getSelectionMenu(screen, 'SELECT TIMEFRAME', ['5M', '1H', '1D'], val => {
+        if (val) {
+          loadToken(null, val);
+        } else {
+          buildTokenTab(); screen.render();
+        }
+      });
     }
   });
 
