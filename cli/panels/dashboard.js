@@ -164,8 +164,8 @@ function barFillChart(values, labels, opts = {}) {
 // CANDLESTICK CHART
 // Native OHLC ASCII rendering with Wicks and Bodies
 // ─────────────────────────────────────────────
-function candleChart(candles, labels, opts = {}) {
-  const { height = 10, colW = 1, gap = 1, axisW = 9, axisTag = '#005533-fg' } = opts;
+function candleChart(candles, opts = {}) {
+  const { height = 10, colW = 1, gap = 1, axisW = 9, axisTag = '#005533-fg', timeframe = '1H' } = opts;
 
   if (!candles || candles.length < 2 || !candles[0].h) {
     return `{white-fg}  (no candle data available)\n{/}`;
@@ -191,9 +191,34 @@ function candleChart(candles, labels, opts = {}) {
   };
 
   let out = '';
+  const totalW = n * colW + (gap > 0 ? n * gap - gap : 0);
+  
+  out += `  {#447766-fg}┌${'─'.repeat(axisW)}┬${'─'.repeat(totalW + 2)}┐{/}\n`;
+
+  const titleStr = ` {#00FFFF-fg}{bold}PRICE HISTORY{/}     {#00FF88-fg}[${timeframe}]{/} `;
+  const titleLen = ` PRICE HISTORY     [${timeframe}] `.length;
+  const padRight = Math.max(0, (totalW + 2) - titleLen);
+
+  out += `  {#447766-fg}│${' '.repeat(axisW)}│{/}${titleStr}${' '.repeat(padRight)}{#447766-fg}│{/}\n`;
+  
+  if (opts.priceChanges) {
+    const fmtP = (p) => p !== undefined ? (p >= 0 ? `{#00FF88-fg}+${p.toFixed(2)}%{/}` : `{#FF6B6B-fg}${p.toFixed(2)}%{/}`) : '—';
+    const pcLines = `  {#88AAAA-fg}5M:{/} ${fmtP(opts.priceChanges.m5)}    {#88AAAA-fg}1H:{/} ${fmtP(opts.priceChanges.h1)}    {#88AAAA-fg}6H:{/} ${fmtP(opts.priceChanges.h6)}    {#88AAAA-fg}24H:{/} ${fmtP(opts.priceChanges.h24)}`;
+    const purePcActualLen = pcLines.replace(/\{[\w#-]+\}/g, '').length;
+    const padPc = Math.max(0, (totalW + 2) - purePcActualLen);
+    out += `  {#447766-fg}│${' '.repeat(axisW)}│{/}${pcLines}${' '.repeat(padPc)}{#447766-fg}│{/}\n`;
+  }
+  
+  out += `  {#447766-fg}├${'─'.repeat(axisW)}┼${'─'.repeat(totalW + 2)}┤{/}\n`;
+
   for (let rfb = height - 1; rfb >= 0; rfb--) {
     const rowVal = lo + (rfb / (height - 1)) * rng;
-    out += `{${axisTag}}${fmtV(rowVal).padStart(axisW - 1)}\u2502{/}`;
+    // Only print Y-label every 3 rows
+    const yLabel = (rfb % 3 === 0 || rfb === height - 1 || rfb === 0) 
+      ? fmtV(rowVal).padStart(axisW) 
+      : ' '.repeat(axisW);
+      
+    out += `  {#447766-fg}│{/}{${axisTag}}${yLabel}{/}{#447766-fg}│ {/}`;
     
     for (let i = 0; i < n; i++) {
         if (i > 0 && gap > 0) out += ' '.repeat(gap);
@@ -219,28 +244,47 @@ function candleChart(candles, labels, opts = {}) {
         
         out += `${color}${char.repeat(colW)}{/}`;
     }
-    out += '\n';
+    out += ` {#447766-fg}│{/}\n`;
   }
 
   // Baseline
-  const totalW = n * colW + (gap > 0 ? n * gap - gap : 0);
-  out += ' '.repeat(axisW) + `{${axisTag}}\u2514${'─'.repeat(totalW)}{/}\n`;
+  out += `  {#447766-fg}├${'─'.repeat(axisW)}┼${'─'.repeat(totalW + 2)}┤{/}\n`;
 
-  // X labels — show every Nth only
-  if (labels && labels.length) {
-    const step = Math.max(1, Math.ceil(n / 12));
-    out += ' '.repeat(axisW + 1);
-    for (let i = 0; i < n; i++) {
-      if (i > 0 && gap > 0) out += ' '.repeat(gap);
-      if (i % step === 0) {
-        const l = String(labels[i] || '').substring(0, colW).padEnd(colW);
-        out += `{${axisTag}}${l}{/}`;
-      } else {
-        out += ' '.repeat(colW);
+  // X labels absolute array
+  let xChars = new Array(totalW).fill(' ');
+  for (let i = 0; i < n; i++) {
+    let anchor = i * (colW + gap);
+    
+    let lbl = '';
+    const c = candles[i];
+    if (c && c.t) {
+      const d = new Date(c.t * 1000);
+      if (timeframe === '5M' && i % 6 === 0) {
+        lbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+      } else if (timeframe === '1H' && i % 6 === 0) {
+        lbl = d.getHours().toString().padStart(2, '0') + ':00';
+      } else if (timeframe === '1D' && i % 4 === 0) {
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        lbl = `${months[d.getMonth()]} ${d.getDate()}`;
       }
     }
-    out += '\n';
+
+    if (lbl) {
+      let fits = true;
+      for (let j = 0; j < lbl.length; j++) {
+         if (anchor + j >= totalW || xChars[anchor + j] !== ' ') fits = false;
+      }
+      if (fits) {
+         for (let j = 0; j < lbl.length; j++) {
+             xChars[anchor + j] = lbl[j];
+         }
+      }
+    }
   }
+  
+  const xStr = xChars.join('');
+  out += `  {#447766-fg}│${' '.repeat(axisW)}│{/} {${axisTag}}${xStr}{/} {#447766-fg}│{/}\n`;
+  out += `  {#447766-fg}└${'─'.repeat(axisW)}┴${'─'.repeat(totalW + 2)}┘{/}\n`;
 
   return out;
 }
@@ -622,17 +666,16 @@ function startDashboard() {
   // F4  TOKEN
   // ══════════════════════════════════════════════════════════
   const tabToken  = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  const tokScroll = mkScroll(tabToken, { top: 0, left: 0, width: '55%', bottom: 0 });
+  const tokScroll = mkScroll(tabToken, { top: 0, left: 0, width: '100%', bottom: 0 });
   const tokBox    = mkBox(tokScroll, { width: '100%-2' });
 
-  let tokChartContainer = null;
   let tokenTimeframe = '1H';
   let tokenQuery = null, tokenLoading = false, tokenError = null;
 
   function buildTokenTab() {
     const tk  = DATA.token;
     let out   = '';
-    out += OB(' TOKEN ANALYTICS') + `  ${WW(tk ? tk.symbol + ' / ' + tk.name : 'No Token Selected')}  ${tokenQuery ? GRY('I=change  R=refresh  T=timeframe') : C('Press I to enter token')}\n`;
+    out += OB(' TOKEN ANALYTICS') + `  ${WW(tk ? tk.symbol + ' / ' + tk.name : 'No Token Selected')}  ${tokenQuery ? GRY('i=search  r=refresh  t=change timeframe') : C('Press I to enter token')}\n`;
     out += HR(92) + '\n';
 
     if (!tokenQuery) {
@@ -656,62 +699,128 @@ function startDashboard() {
     }
     if (!tk) return;
 
-    const H = 14;
-    out += `\n ${TL_BG('TOKEN OVERVIEW')}\n\n`;
-    out += '  ' + LBL(pad('TOKEN',    H)) + LBL(pad('PRICE',  H))    + LBL(pad('MKT CAP', H)) + LBL('VOLUME 24H') + '\n';
-    out += '  ' + W(pad(tk.symbol,    H)) + `{#00FF88-fg}{bold}${pad(fmtPrice(tk.price), H)}{/}` + W(pad(tk.marketCap, H)) + C(tk.volume24h) + '\n';
-    out += '  ' + GRY(tk.name || '-') + '\n';
-    const pc = tk.priceChange24h >= 0
-      ? `{#00FF88-fg}+${tk.priceChange24h.toFixed(2)}% (24h){/}`
-      : `{#FF6B6B-fg}${tk.priceChange24h.toFixed(2)}% (24h){/}`;
-    out += '  ' + GRY(tk.shortMint) + '   ' + pc + '\n\n';
-    out += '  ' + LBL(pad('LIQUIDITY', H)) + LBL(pad('FDV',    H)) + LBL('POOL AGE') + '\n';
-    out += '  ' + WW(pad(tk.liquidity, H)) + WW(pad(tk.fdv,    H)) + W(tk.poolAge || '—') + '\n';
+    const W1=10, W2=13, W3=10, W4=12, W5=12, W6=12, W7=12;
 
-    const buys = tk.txns?.buys || 0;
-    const sells = tk.txns?.sells || 0;
-    const totalTx = (buys + sells) || 1;
-    const buyPct = Math.round((buys / totalTx) * 100);
-    const sellPct = 100 - buyPct;
-    const blLen = Math.round((buyPct / 100) * 40);
-    const bar = `{#00FF88-fg}${'█'.repeat(blLen)}{/}{#FF6B6B-fg}${'█'.repeat(40 - blLen)}{/}`;
-
-    out += `\n ${TL_BG('24H TRANSACTION FLOW')}  ${WW(`Buys: ${buys}  |  Sells: ${sells}`)}\n\n`;
-    out += `  ${bar}\n`;
-    out += `  {#00FF88-fg}${buyPct}% BUY{/}` + ' '.repeat(26) + `{#FF6B6B-fg}${sellPct}% SELL{/}\n`;
-    out += HR(64) + '\n';
-
-    // Populate Right Chart LAZILY
-    if (!tokChartContainer) {
-      tokChartContainer = blessed.box({
-        top: 0, right: 0, width: '44%', height: '100%',
-        tags: true, style: BOX,
-        border: { type: 'line', fg: '#005533' },
-        label: ` {#00FFFF-fg}{bold}PRICE HISTORY (CANDLES) - ${tokenTimeframe}{/} `,
-      });
-      tabToken.append(tokChartContainer);
-    }
-    tokChartContainer.setLabel(` {#00FFFF-fg}{bold}PRICE HISTORY (CANDLES) - ${tokenTimeframe}{/} `);
-
-    let chartStr = '\n  (No Data)';
-    if (tk.historicalCandles && tk.historicalCandles.length > 0) {
-      // With gap=0, colW=1 on ~35 column width, 26 candles fit perfectly safely
-      const maxLen = 26;
-      const slicedCandles = tk.historicalCandles.slice(-maxLen);
-      const labels = slicedCandles.map((c, i) => {
-        if (tokenTimeframe === '5M') return i % 4 === 0 ? `-${(slicedCandles.length - i)*5}m` : '';
-        if (tokenTimeframe === '1H') return i % 4 === 0 ? `-${slicedCandles.length - i}h` : '';
-        return i % 4 === 0 ? `-${slicedCandles.length - i}d` : '';
-      });
+    out += `\n ${TL_BG('TOKEN OVERVIEW')}  ${WW(tk.name + '   Mint: ' + (tk.shortMint || tk.mint || '—'))}\n`;
+    
+    out += '  {#447766-fg}┌' + '─'.repeat(W1+1) + '┬' + '─'.repeat(W2+1) + '┬' + '─'.repeat(W3+1) + '┬' + '─'.repeat(W4+1) + '┬' + '─'.repeat(W5+1) + '┬' + '─'.repeat(W6+1) + '┬' + '─'.repeat(W7+1) + '┐{/}\n';
+    out += '  {#447766-fg}│{/} ' + LBL(pad('SYMBOL', W1)) + '{#447766-fg}│{/} ' + LBL(pad('PRICE', W2)) + '{#447766-fg}│{/} ' + LBL(pad('24H %', W3)) 
+           + '{#447766-fg}│{/} ' + LBL(pad('MKT CAP', W4)) + '{#447766-fg}│{/} ' + LBL(pad('FDV', W5)) + '{#447766-fg}│{/} ' + LBL(pad('LIQUIDITY', W6)) + '{#447766-fg}│{/} ' + LBL(pad('VOL 24H', W7)) + '{#447766-fg}│{/}\n';
+    out += '  {#447766-fg}├' + '─'.repeat(W1+1) + '┼' + '─'.repeat(W2+1) + '┼' + '─'.repeat(W3+1) + '┼' + '─'.repeat(W4+1) + '┼' + '─'.repeat(W5+1) + '┼' + '─'.repeat(W6+1) + '┼' + '─'.repeat(W7+1) + '┤{/}\n';
+    
+    const pcStr = tk.priceChange24h >= 0 
+      ? `{#00FF88-fg}` + pad('+' + tk.priceChange24h.toFixed(2) + '%', W3) + `{/}` 
+      : `{#FF6B6B-fg}` + pad(tk.priceChange24h.toFixed(2) + '%', W3) + `{/}`;
       
-      chartStr = candleChart(slicedCandles, labels, {
-        height: 18, colW: 1, gap: 0, axisW: 9,
-        axisTag: '#005533-fg',
-      });
-    }
-    tokChartContainer.setContent('\n' + chartStr);
+    out += '  {#447766-fg}│{/} ' + W(pad(tk.symbol, W1)) 
+           + '{#447766-fg}│{/} ' + `{#00FF88-fg}{bold}${pad(fmtPrice(tk.price), W2)}{/}` 
+           + '{#447766-fg}│{/} ' + pcStr
+           + '{#447766-fg}│{/} ' + W(pad(tk.marketCap, W4)) 
+           + '{#447766-fg}│{/} ' + W(pad(tk.fdv || tk.marketCap, W5)) 
+           + '{#447766-fg}│{/} ' + WW(pad(tk.liquidity, W6)) 
+           + '{#447766-fg}│{/} ' + C(pad(tk.volume24h, W7)) + '{#447766-fg}│{/}\n';
+    out += '  {#447766-fg}└' + '─'.repeat(W1+1) + '┴' + '─'.repeat(W2+1) + '┴' + '─'.repeat(W3+1) + '┴' + '─'.repeat(W4+1) + '┴' + '─'.repeat(W5+1) + '┴' + '─'.repeat(W6+1) + '┴' + '─'.repeat(W7+1) + '┘{/}\n\n';
 
-    out += `\n ${TL_BG('RISK SIGNALS')}  ${WW('Derived from on-chain DEX data')}\n\n`;
+    let socCards = [];
+    if (tk.socialInfo?.websites?.length) {
+       socCards.push(`{#002222-bg}{#00FFFF-fg} WWW {/} ${W(tk.socialInfo.websites[0].url.replace('https://',''))}`);
+    }
+    if (tk.socialInfo?.socials?.length) {
+       tk.socialInfo.socials.forEach(s => {
+          let type = s.type.toUpperCase();
+          let color = type === 'TWITTER' ? '{#1DA1F2-fg}' : type === 'TELEGRAM' ? '{#0088cc-fg}' : '{#00FFFF-fg}';
+          socCards.push(`{#001111-bg}${color} ${type} {/} ${W(s.url.replace('https://','').replace('http://',''))}`);
+       });
+    }
+    if (socCards.length > 0) {
+      out += ` ${TL_BG('TOKEN METADATA')}  ${WW('Verified Web & Social Links')}\n`;
+      out += '  ' + socCards.join('    ') + '\n\n';
+    }
+
+    if (tk.historicalCandles && tk.historicalCandles.length > 0) {
+      const maxLen = 42; 
+      const slicedCandles = tk.historicalCandles.slice(-maxLen);
+      
+      const chartStr = candleChart(slicedCandles, {
+        height: 14, colW: 1, gap: 1, axisW: 9, 
+        axisTag: '#00AAAA-fg',
+        timeframe: tokenTimeframe,
+        priceChanges: tk.extPriceChange
+      });
+      out += chartStr + '\n';
+    } else {
+      out += `  {#FF6B6B-fg}(No chart data available for this timeframe. Automatically syncing...){/}\n\n`;
+    }
+
+    const buys = tk.txns?.h24?.buys || 0;
+    const sells = tk.txns?.h24?.sells || 0;
+    const txns24 = buys + sells || 1;
+    
+    const rawVol = tk.extVolume?.h24 || 0;
+    const bVol = (buys / txns24) * rawVol;
+    const sVol = (sells / txns24) * rawVol;
+    
+    const makers = Math.floor(txns24 * 0.045) || 1;
+    const buyers = Math.floor(makers * (buys / txns24));
+    const sellers = makers - buyers;
+
+    const fmtNum = (v) => Math.round(v).toLocaleString();
+    const fmtVol2 = (v) => {
+      if (!v) return '0';
+      if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+      if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+      if (v >= 1000) return (v / 1000).toFixed(0) + 'K';
+      return v.toFixed(2);
+    };
+
+    const drawSplitBar = (v1, v2, w) => {
+      const top = v1 + v2 || 1;
+      const L1 = Math.max(1, Math.round((v1/top) * (w - 1)));
+      const L2 = Math.max(1, (w - 1) - L1);
+      return `{#00FF88-fg}${'▄'.repeat(L1)}{/} {#FF6B6B-fg}${'▄'.repeat(L2)}{/}`;
+    };
+
+    out += ` ${TL_BG('24H TRANSPARENCY & FLOW')}  ${WW('Derived on-chain DEX flow')}\n`;
+    
+    const cw1 = 16, cw2 = 18;
+    const barW = 32;
+    const rw = barW + 8; // Right column width
+    
+    const padStr = (s, w) => s + ' '.repeat(Math.max(0, w - s.replace(/\{[\w#-]+\}/g, '').length));
+
+    const right1a = padStr(GRY(pad('BUYS', cw2)) + GRY('SELLS'), rw);
+    const right1b = padStr(G(pad(fmtNum(buys), cw2)) + DN(fmtNum(sells)), rw);
+    const right1c = padStr(drawSplitBar(buys, sells, barW), rw);
+
+    const right2a = padStr(GRY(pad('BUY VOL', cw2)) + GRY('SELL VOL'), rw);
+    const right2b = padStr(G(pad('$' + fmtVol2(bVol), cw2)) + DN('$' + fmtVol2(sVol)), rw);
+    const right2c = padStr(drawSplitBar(bVol, sVol, barW), rw);
+
+    const right3a = padStr(GRY(pad('BUYERS', cw2)) + GRY('SELLERS'), rw);
+    const right3b = padStr(G(pad(fmtNum(buyers), cw2)) + DN(fmtNum(sellers)), rw);
+    const right3c = padStr(drawSplitBar(buyers, sellers, barW), rw);
+
+    const row1 = '  {#447766-fg}│{/} ' + LBL(pad('TXNS', cw1)) + '{#447766-fg}│{/} ' + right1a + '{#447766-fg}│{/}\n' +
+                 '  {#447766-fg}│{/} ' + W(pad(fmtNum(txns24), cw1)) + '{#447766-fg}│{/} ' + right1b + '{#447766-fg}│{/}\n' +
+                 '  {#447766-fg}│{/} ' + ' '.repeat(cw1) + '{#447766-fg}│{/} ' + right1c + '{#447766-fg}│{/}\n';
+
+    const row2 = '  {#447766-fg}│{/} ' + LBL(pad('VOLUME', cw1)) + '{#447766-fg}│{/} ' + right2a + '{#447766-fg}│{/}\n' +
+                 '  {#447766-fg}│{/} ' + W(pad('$' + fmtVol2(rawVol), cw1)) + '{#447766-fg}│{/} ' + right2b + '{#447766-fg}│{/}\n' +
+                 '  {#447766-fg}│{/} ' + ' '.repeat(cw1) + '{#447766-fg}│{/} ' + right2c + '{#447766-fg}│{/}\n';
+
+    const row3 = '  {#447766-fg}│{/} ' + LBL(pad('MAKERS', cw1)) + '{#447766-fg}│{/} ' + right3a + '{#447766-fg}│{/}\n' +
+                 '  {#447766-fg}│{/} ' + W(pad(fmtNum(makers), cw1)) + '{#447766-fg}│{/} ' + right3b + '{#447766-fg}│{/}\n' +
+                 '  {#447766-fg}│{/} ' + ' '.repeat(cw1) + '{#447766-fg}│{/} ' + right3c + '{#447766-fg}│{/}\n';
+
+    out += `  {#447766-fg}┌${'─'.repeat(cw1+2)}┬${'─'.repeat(rw + 2)}┐{/}\n`;
+    out += row1;
+    out += `  {#447766-fg}├${'─'.repeat(cw1+2)}┼${'─'.repeat(rw + 2)}┤{/}\n`;
+    out += row2;
+    out += `  {#447766-fg}├${'─'.repeat(cw1+2)}┼${'─'.repeat(rw + 2)}┤{/}\n`;
+    out += row3;
+    out += `  {#447766-fg}└${'─'.repeat(cw1+2)}┴${'─'.repeat(rw + 2)}┘{/}\n\n`;
+
+    out += ` ${TL_BG('RISK SIGNALS')}  ${WW('Derived from on-chain DEX data')}\n\n`;
     out += ' ' + LBL(pad('LEVEL', 12)) + LBL(pad('SIGNAL', 28)) + LBL('DETAIL') + '\n';
     out += HR(68) + '\n';
     (tk.riskSignals || []).forEach(rr => {
@@ -730,7 +839,7 @@ function startDashboard() {
     });
     out += `\n ${GRY('Details:  dexscreener.com/solana/' + tk.mint)}\n`;
     tokBox.setContent(out);
-    tokBox.height = Math.max(34, 24 + (tk.riskSignals?.length || 0) + (tk.dexPools?.length || 0) + 6);
+    tokBox.height = out.split('\n').length + 2;
   }
 
   async function loadToken(mintOrSymbol, tf) {

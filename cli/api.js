@@ -399,7 +399,10 @@ async function fetchTokenData(mintOrSymbol, timeframe = '1H') {
   // Enhance with Pool Age & Txns
   const ageDays = top.pairCreatedAt ? Math.floor((Date.now() - top.pairCreatedAt) / (1000 * 60 * 60 * 24)) : 0;
   const poolAge = ageDays > 0 ? `${ageDays} Days` : 'New (<24h)';
-  const txns = top.txns?.h24 || { buys: 0, sells: 0 };
+  const txns = top.txns || {}; 
+  const extVolume = top.volume || {};
+  const extPriceChange = top.priceChange || {};
+  const socialInfo = top.info || {};
 
   // Fetch OHLCV Historical Data via GeckoTerminal
   let historical = [];
@@ -451,6 +454,9 @@ async function fetchTokenData(mintOrSymbol, timeframe = '1H') {
     historicalCandles,
     poolAge,
     txns,
+    extVolume,
+    extPriceChange,
+    socialInfo,
     timeframe,
   };
 }
