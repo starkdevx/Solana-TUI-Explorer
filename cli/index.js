@@ -1,3 +1,6 @@
+// Force truecolor for Blessed layout engine on Windows
+process.env.COLORTERM = 'truecolor';
+
 // Load .env FIRST — before any other require() reads process.env
 require('dotenv').config({ path: require('path').resolve(__dirname, '.env') });
 

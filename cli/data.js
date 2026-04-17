@@ -116,8 +116,8 @@ async function loadWalletData(address) {
   return DATA;
 }
 
-async function loadTokenData(mintOrSymbol) {
-  const result  = await API.fetchTokenData(mintOrSymbol);
+async function loadTokenData(mintOrSymbol, timeframe) {
+  const result  = await API.fetchTokenData(mintOrSymbol, timeframe);
   DATA.token    = result;
   return DATA;
 }

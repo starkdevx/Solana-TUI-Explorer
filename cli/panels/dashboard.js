@@ -89,6 +89,7 @@ function barFillChart(values, labels, opts = {}) {
     axisW   = 7,
     colTag  = '#00FF88-fg',
     axisTag = '#00FFFF-fg',
+    style   = 'solid', // 'solid' or 'dot'
   } = opts;
 
   if (!values || values.length < 2 || values.every(v => !v)) {
@@ -98,7 +99,7 @@ function barFillChart(values, labels, opts = {}) {
   const n   = values.length;
   const lo  = Math.min(...values);
   const hi  = Math.max(...values);
-  const rng = Math.max(hi - lo, 1);
+  const rng = (hi - lo) === 0 ? (hi || 1) : (hi - lo);
 
   // barH: rows filled from bottom (1 = just base, height = full column)
   const getBarH = v => Math.max(1, Math.round((v - lo) / rng * (height - 1)) + 1);
@@ -108,7 +109,11 @@ function barFillChart(values, labels, opts = {}) {
     if (a >= 10000) return (v / 1000).toFixed(0) + 'k';
     if (a >= 1000)  return Math.round(v).toString();
     if (a >= 10)    return v.toFixed(0);
-    return v.toFixed(1);
+    if (a >= 1)     return v.toFixed(1);
+    if (a >= 0.1)   return v.toFixed(2);
+    if (a >= 0.001) return v.toFixed(4);
+    if (a === 0)    return '0';
+    return v.toExponential(2);
   };
 
   let out = '';
@@ -119,9 +124,15 @@ function barFillChart(values, labels, opts = {}) {
     for (let i = 0; i < n; i++) {
       if (i > 0 && gap > 0) out += ' '.repeat(gap);
       const bh = getBarH(values[i]);
-      out += rfb < bh
-        ? `{${colTag}}${'█'.repeat(colW)}{/}`
-        : ' '.repeat(colW);
+      if (style === 'dot') {
+        out += rfb === (bh - 1)
+          ? `{${colTag}}•${' '.repeat(colW - 1)}{/}`
+          : ' '.repeat(colW);
+      } else {
+        out += rfb < bh
+          ? `{${colTag}}${'█'.repeat(colW)}{/}`
+          : ' '.repeat(colW);
+      }
     }
     out += '\n';
   }
@@ -148,6 +159,92 @@ function barFillChart(values, labels, opts = {}) {
 
   return out;
 }
+
+// ─────────────────────────────────────────────
+// CANDLESTICK CHART
+// Native OHLC ASCII rendering with Wicks and Bodies
+// ─────────────────────────────────────────────
+function candleChart(candles, labels, opts = {}) {
+  const { height = 10, colW = 1, gap = 1, axisW = 9, axisTag = '#005533-fg' } = opts;
+
+  if (!candles || candles.length < 2 || !candles[0].h) {
+    return `{white-fg}  (no candle data available)\n{/}`;
+  }
+
+  const n = candles.length;
+  const lo = Math.min(...candles.map(c => c.l));
+  const hi = Math.max(...candles.map(c => c.h));
+  const rng = (hi - lo) === 0 ? (hi || 1) : (hi - lo);
+
+  const getRow = v => Math.min(height - 1, Math.max(0, Math.round((v - lo) / rng * (height - 1))));
+
+  const fmtV = v => {
+    const a = Math.abs(v);
+    if (a >= 10000) return (v / 1000).toFixed(0) + 'k';
+    if (a >= 1000)  return Math.round(v).toString();
+    if (a >= 10)    return v.toFixed(0);
+    if (a >= 1)     return v.toFixed(1);
+    if (a >= 0.1)   return v.toFixed(2);
+    if (a >= 0.001) return v.toFixed(4);
+    if (a === 0)    return '0';
+    return v.toExponential(2);
+  };
+
+  let out = '';
+  for (let rfb = height - 1; rfb >= 0; rfb--) {
+    const rowVal = lo + (rfb / (height - 1)) * rng;
+    out += `{${axisTag}}${fmtV(rowVal).padStart(axisW - 1)}\u2502{/}`;
+    
+    for (let i = 0; i < n; i++) {
+        if (i > 0 && gap > 0) out += ' '.repeat(gap);
+        const c = candles[i];
+        
+        const rHigh = getRow(c.h);
+        const rLow  = getRow(c.l);
+        const rOpen = getRow(c.o);
+        const rClose= getRow(c.c);
+        
+        const topB = Math.max(rOpen, rClose);
+        const botB = Math.min(rOpen, rClose);
+        
+        const isBull = c.c >= c.o;
+        const color = isBull ? '{#00FF88-fg}' : '{#FF6B6B-fg}';
+        
+        let char = ' ';
+        if (rfb <= topB && rfb >= botB) {
+           char = '█'; // body
+        } else if (rfb <= rHigh && rfb >= rLow) {
+           char = '│'; // wick
+        }
+        
+        out += `${color}${char.repeat(colW)}{/}`;
+    }
+    out += '\n';
+  }
+
+  // Baseline
+  const totalW = n * colW + (gap > 0 ? n * gap - gap : 0);
+  out += ' '.repeat(axisW) + `{${axisTag}}\u2514${'─'.repeat(totalW)}{/}\n`;
+
+  // X labels — show every Nth only
+  if (labels && labels.length) {
+    const step = Math.max(1, Math.ceil(n / 12));
+    out += ' '.repeat(axisW + 1);
+    for (let i = 0; i < n; i++) {
+      if (i > 0 && gap > 0) out += ' '.repeat(gap);
+      if (i % step === 0) {
+        const l = String(labels[i] || '').substring(0, colW).padEnd(colW);
+        out += `{${axisTag}}${l}{/}`;
+      } else {
+        out += ' '.repeat(colW);
+      }
+    }
+    out += '\n';
+  }
+
+  return out;
+}
+
 
 // ─────────────────────────────────────────────
 // BANNERS
@@ -195,59 +292,61 @@ function startDashboard() {
   });
 
   // ─────────────────────────────────────────────
-  // TOP BAR (rows 0-1)
+  // TOP BAR — single premium header band
   // ─────────────────────────────────────────────
-  const topRow = blessed.box({ parent: root, top: 0, left: 0, width: '100%', height: 2, tags: true, style: BOX });
+  const topRow = blessed.box({
+    parent: root, top: 0, left: 0, width: '100%', height: 1,
+    tags: true,
+    style: { bg: '#002E1A', fg: 'white' },
+  });
 
-  blessed.text({ parent: topRow, top: 0, left: 1, tags: true, style: BOX,
-    content: '{#00FF88-fg}{bold} ▶ SOLANA TERMINAL{/}' });
-  blessed.text({ parent: topRow, top: 1, left: 1, tags: true, style: BOX,
-    content: '{#00FFFF-fg}   REAL-TIME INTELLIGENCE  ·  DexScreener + Solana RPC{/}' });
+  // Logo — left
+  blessed.text({ parent: topRow, top: 0, left: 0, tags: true,
+    style: { bg: '#002E1A' },
+    content: ' {#00FF88-fg}{bold}⬡ SOLANA TERMINAL{/}  {#336655-fg}│{/}  {#668877-fg}Real-Time Market Intelligence{/}' });
 
-  // Ticker (price strip in top bar)
-  const tickerBox = blessed.text({ parent: topRow, top: 0, left: 25, tags: true, content: '', style: BOX });
-  function refreshTicker() {
-    if (!DATA.market.length) return;
-    const parts = DATA.market.filter(d => ['BTC','ETH','SOL'].includes(d.symbol)).map(d => {
-      const col = d.pct > 0 ? '#00FF88-fg' : '#FF6B6B-fg';
-      return `{white-fg}{bold}${d.symbol}{/} {white-fg}${fmtPrice(d.price)}{/} {${col}}${fmtPct(d.pct)}{/}`;
-    });
-    tickerBox.setContent(parts.join('  {#226644-fg}│{/}  '));
-  }
-
-  // Clock (top-right)
-  const clockBox = blessed.text({ parent: topRow, top: 0, right: 1, tags: true, content: '', style: BOX });
+  // Live dot + clock — right
+  const clockBox = blessed.text({ parent: topRow, top: 0, right: 0, tags: true,
+    style: { bg: '#002E1A' }, content: '' });
   function refreshClock() {
     const now = new Date();
     const dt  = now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
     const tm  = now.toLocaleTimeString('en-US', { hour12: false });
-    clockBox.setContent(`{#00FF88-fg}LIVE{/}  {#00FFFF-fg}${dt} ${tm}{/}  {#005566-bg}{white-fg} v1.0 {/}`);
+    clockBox.setContent(`{#00FF88-fg}● LIVE{/}  {#99CCBB-fg}${dt}  ${tm}{/}  {#004D33-bg}{#00FF88-fg}{bold} v1.0 {/} `);
   }
   refreshClock();
   setInterval(refreshClock, 1000);
 
-  // Divider row 2 — green
-  blessed.text({ parent: root, top: 2, left: 0, width: '100%', height: 1, tags: true, style: BOX,
-    content: `{#00FF88-fg}${'═'.repeat(300)}{/}` });
+  // Ticker — kept as stub so callers don't break
+  function refreshTicker() {}
+
+  // Divider row 1 — bright thin line
+  blessed.text({ parent: root, top: 1, left: 0, width: '100%', height: 1, tags: true, style: BOX,
+    content: `{#00FF88-fg}${'━'.repeat(400)}{/}` });
 
   // ─────────────────────────────────────────────
-  // NAV BAR (row 3)
+  // NAV BAR (row 2)
   // ─────────────────────────────────────────────
-  const navBar = blessed.box({ parent: root, top: 3, left: 0, width: '100%', height: 1, tags: true, style: BOX });
-  blessed.text({ parent: navBar, top: 0, right: 2, tags: true, style: BOX,
-    content: '{#00FFFF-fg}DexScreener · Solana-RPC{/}  {#00FF88-fg}● MAINNET{/}' });
-  const navContent = blessed.text({ parent: navBar, top: 0, left: 0, tags: true, content: '', style: BOX });
+  const navBar = blessed.box({
+    parent: root, top: 2, left: 0, width: '100%', height: 1,
+    tags: true, style: { bg: '#001A0D', fg: 'white' },
+  });
+  blessed.text({ parent: navBar, top: 0, right: 1, tags: true,
+    style: { bg: '#001A0D' },
+    content: '{#00FF88-fg}● MAINNET{/}' });
+  const navContent = blessed.text({ parent: navBar, top: 0, left: 0, tags: true,
+    style: { bg: '#001A0D', fg: 'white' }, content: '' });
 
-  // Divider row 4 — dimmer green
-  blessed.text({ parent: root, top: 4, left: 0, width: '100%', height: 1, tags: true, style: BOX,
-    content: `{#00CC66-fg}${'═'.repeat(300)}{/}` });
+  // Divider row 3 — dim thin line
+  blessed.text({ parent: root, top: 3, left: 0, width: '100%', height: 1, tags: true, style: BOX,
+    content: `{#005533-fg}${'─'.repeat(400)}{/}` });
 
   // ─────────────────────────────────────────────
   // RIGHT SIDEBAR
   // ─────────────────────────────────────────────
-  const SBW = 28;
+  const SBW = 34;
   const sidebar = blessed.box({
-    parent: root, top: 5, right: 0, width: SBW, bottom: 2,
+    parent: root, top: 4, right: 0, width: SBW, bottom: 2,
     style: BOX,
     border: { type: 'line', fg: '#00FFFF', left: true, top: false, right: false, bottom: false },
   });
@@ -257,25 +356,14 @@ function startDashboard() {
     label: ' {#00FF88-fg}{bold}TOP GAINERS{/} ', tags: true,
     border: BCYAN, style: BOX,
   });
-  function getLineSpark(dataArr, w) {
-    if (!dataArr || !dataArr.length) return '─'.repeat(w);
-    const min = Math.min(...dataArr), max = Math.max(...dataArr), rng = (max-min)||1;
-    const chars = '._-~^';
-    let out = '';
-    for(let i=0; i<w; i++) {
-       const idx = Math.floor(i * dataArr.length / w);
-       const norm = Math.max(0, Math.min(1, (dataArr[idx] - min) / rng));
-       out += chars[Math.floor(norm * 4.99)];
-    }
-    return out;
-  }
-
   function buildGainers() {
     if (!DATA.topGainers.length) { gainBox.setContent(WW(' No gainers presently')); return; }
     let s = '';
     DATA.topGainers.slice(0, 5).forEach(d => {
-      const spk = getLineSpark(d.sparkArray, 8);
-      s += W(pad(d.symbol, 10)) + `{#00FF88-fg}${spk}{/}  ` + G('+' + d.pct.toFixed(1) + '%') + '\n';
+      const bl = Math.max(0, Math.round(Math.min(d.pct / 40 * 10, 10)));
+      s += W(pad(d.symbol, 10)) +
+           `{#0EF20A-fg}${'▆'.repeat(bl)}{/}{#c3e3c5-fg}${'▆'.repeat(10 - bl)}{/}` +
+           ' ' + G('+' + d.pct.toFixed(1) + '%') + '\n';
     });
     gainBox.setContent(s);
   }
@@ -289,8 +377,10 @@ function startDashboard() {
     if (!DATA.topLosers.length) { lossBox.setContent(WW(' No negative pairs')); return; }
     let s = '';
     DATA.topLosers.slice(0, 5).forEach(d => {
-      const spk = getLineSpark(d.sparkArray, 8);
-      s += W(pad(d.symbol, 10)) + `{#FF6B6B-fg}${spk}{/}  ` + DN(d.pct.toFixed(1) + '%') + '\n';
+      const bl = Math.max(0, Math.round(Math.min(Math.abs(d.pct) / 15 * 10, 10)));
+      s += W(pad(d.symbol, 10)) +
+           `{#941234-fg}${'▆'.repeat(bl)}{/}{#c3e3c5-fg}${'▆'.repeat(10 - bl)}{/}` +
+           ' ' + DN(d.pct.toFixed(1) + '%') + '\n';
     });
     lossBox.setContent(s);
   }
@@ -308,7 +398,7 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   // MAIN PANE
   // ─────────────────────────────────────────────
-  const mainPane = blessed.box({ parent: root, top: 5, left: 0, right: SBW, bottom: 2, style: BOX });
+  const mainPane = blessed.box({ parent: root, top: 4, left: 0, right: SBW, bottom: 2, style: BOX });
 
   let activeScroll = null;
   screen.key(['up', 'k'],   () => { activeScroll?.scroll(-1);  screen.render(); });
@@ -532,15 +622,17 @@ function startDashboard() {
   // F4  TOKEN
   // ══════════════════════════════════════════════════════════
   const tabToken  = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  const tokScroll = mkScroll(tabToken, { top: 0, left: 0, right: 0, bottom: 0 });
+  const tokScroll = mkScroll(tabToken, { top: 0, left: 0, width: '55%', bottom: 0 });
   const tokBox    = mkBox(tokScroll, { width: '100%-2' });
 
+  let tokChartContainer = null;
+  let tokenTimeframe = '1H';
   let tokenQuery = null, tokenLoading = false, tokenError = null;
 
   function buildTokenTab() {
     const tk  = DATA.token;
     let out   = '';
-    out += OB(' TOKEN ANALYTICS') + `  ${WW(tk ? tk.symbol + ' / ' + tk.name : 'No Token Selected')}  ${tokenQuery ? GRY('I=change  R=refresh') : C('Press I to enter token')}\n`;
+    out += OB(' TOKEN ANALYTICS') + `  ${WW(tk ? tk.symbol + ' / ' + tk.name : 'No Token Selected')}  ${tokenQuery ? GRY('I=change  R=refresh  T=timeframe') : C('Press I to enter token')}\n`;
     out += HR(92) + '\n';
 
     if (!tokenQuery) {
@@ -564,7 +656,7 @@ function startDashboard() {
     }
     if (!tk) return;
 
-    const H = 20;
+    const H = 14;
     out += `\n ${TL_BG('TOKEN OVERVIEW')}\n\n`;
     out += '  ' + LBL(pad('TOKEN',    H)) + LBL(pad('PRICE',  H))    + LBL(pad('MKT CAP', H)) + LBL('VOLUME 24H') + '\n';
     out += '  ' + W(pad(tk.symbol,    H)) + `{#00FF88-fg}{bold}${pad(fmtPrice(tk.price), H)}{/}` + W(pad(tk.marketCap, H)) + C(tk.volume24h) + '\n';
@@ -573,9 +665,51 @@ function startDashboard() {
       ? `{#00FF88-fg}+${tk.priceChange24h.toFixed(2)}% (24h){/}`
       : `{#FF6B6B-fg}${tk.priceChange24h.toFixed(2)}% (24h){/}`;
     out += '  ' + GRY(tk.shortMint) + '   ' + pc + '\n\n';
-    out += '  ' + LBL(pad('LIQUIDITY', H)) + LBL('FDV') + '\n';
-    out += '  ' + WW(pad(tk.liquidity, H)) + WW(tk.fdv) + '\n';
-    out += HR(92) + '\n';
+    out += '  ' + LBL(pad('LIQUIDITY', H)) + LBL(pad('FDV',    H)) + LBL('POOL AGE') + '\n';
+    out += '  ' + WW(pad(tk.liquidity, H)) + WW(pad(tk.fdv,    H)) + W(tk.poolAge || '—') + '\n';
+
+    const buys = tk.txns?.buys || 0;
+    const sells = tk.txns?.sells || 0;
+    const totalTx = (buys + sells) || 1;
+    const buyPct = Math.round((buys / totalTx) * 100);
+    const sellPct = 100 - buyPct;
+    const blLen = Math.round((buyPct / 100) * 40);
+    const bar = `{#00FF88-fg}${'█'.repeat(blLen)}{/}{#FF6B6B-fg}${'█'.repeat(40 - blLen)}{/}`;
+
+    out += `\n ${TL_BG('24H TRANSACTION FLOW')}  ${WW(`Buys: ${buys}  |  Sells: ${sells}`)}\n\n`;
+    out += `  ${bar}\n`;
+    out += `  {#00FF88-fg}${buyPct}% BUY{/}` + ' '.repeat(26) + `{#FF6B6B-fg}${sellPct}% SELL{/}\n`;
+    out += HR(64) + '\n';
+
+    // Populate Right Chart LAZILY
+    if (!tokChartContainer) {
+      tokChartContainer = blessed.box({
+        top: 0, right: 0, width: '44%', height: '100%',
+        tags: true, style: BOX,
+        border: { type: 'line', fg: '#005533' },
+        label: ` {#00FFFF-fg}{bold}PRICE HISTORY (CANDLES) - ${tokenTimeframe}{/} `,
+      });
+      tabToken.append(tokChartContainer);
+    }
+    tokChartContainer.setLabel(` {#00FFFF-fg}{bold}PRICE HISTORY (CANDLES) - ${tokenTimeframe}{/} `);
+
+    let chartStr = '\n  (No Data)';
+    if (tk.historicalCandles && tk.historicalCandles.length > 0) {
+      // With gap=0, colW=1 on ~35 column width, 26 candles fit perfectly safely
+      const maxLen = 26;
+      const slicedCandles = tk.historicalCandles.slice(-maxLen);
+      const labels = slicedCandles.map((c, i) => {
+        if (tokenTimeframe === '5M') return i % 4 === 0 ? `-${(slicedCandles.length - i)*5}m` : '';
+        if (tokenTimeframe === '1H') return i % 4 === 0 ? `-${slicedCandles.length - i}h` : '';
+        return i % 4 === 0 ? `-${slicedCandles.length - i}d` : '';
+      });
+      
+      chartStr = candleChart(slicedCandles, labels, {
+        height: 18, colW: 1, gap: 0, axisW: 9,
+        axisTag: '#005533-fg',
+      });
+    }
+    tokChartContainer.setContent('\n' + chartStr);
 
     out += `\n ${TL_BG('RISK SIGNALS')}  ${WW('Derived from on-chain DEX data')}\n\n`;
     out += ' ' + LBL(pad('LEVEL', 12)) + LBL(pad('SIGNAL', 28)) + LBL('DETAIL') + '\n';
@@ -599,11 +733,13 @@ function startDashboard() {
     tokBox.height = Math.max(34, 24 + (tk.riskSignals?.length || 0) + (tk.dexPools?.length || 0) + 6);
   }
 
-  async function loadToken(mintOrSymbol) {
-    tokenQuery = mintOrSymbol; tokenLoading = true; tokenError = null;
+  async function loadToken(mintOrSymbol, tf) {
+    if (mintOrSymbol) tokenQuery = mintOrSymbol;
+    if (tf) tokenTimeframe = tf;
+    tokenLoading = true; tokenError = null;
     buildTokenTab(); screen.render();
     try {
-      await loadTokenData(mintOrSymbol);
+      await loadTokenData(tokenQuery, tokenTimeframe);
       tokenLoading = false;
     } catch (e) {
       tokenLoading = false;
@@ -780,18 +916,36 @@ function startDashboard() {
     netBox.height = 130;
   }
 
-  // ─────────────────────────────────────────────
-  // BOTTOM BARS
-  // ─────────────────────────────────────────────
-  const hints = [
-    'DexScreener prices  │  30s auto-refresh  │  R=refresh now',
-    'I=enter wallet address  │  R=refresh  │  arrows=scroll',
-    'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll',
-    'Terminal news & signals  │  arrows=scroll',
-    'Live event stream  │  arrows=scroll',
-    'Smart alerts  │  R=refresh',
-    'Solana RPC stats  │  R=refresh  │  30s auto-refresh',
-  ];
+    // ══════════════════════════════════════════════════════════
+    // F8  ASK AI (Coming Soon)
+    // ══════════════════════════════════════════════════════════
+    const tabAi  = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+    const aiBox  = mkBox(tabAi, { width: '100%-2', height: '100%' });
+  
+    function buildAiTab() {
+      let out = '';
+      out += OB(' ASK AI ') + `  ${WW('Solana Terminal Intelligence')}\n`;
+      out += HR(92) + '\n\n';
+      out += ` ${TL_BG('COMING SOON')}\n\n`;
+      out += ` ${WW('An integrated AI assistant that can answer your questions about the Solana ecosystem.')}\n`;
+      out += ` ${WW('Ask about tokens, protocols, smart contracts, and network traffic.')}\n\n`;
+      out += ` ${C('Type')} ${W(' i ')} ${C('to chat with the AI (Feature arriving in v2.0)')}\n`;
+      aiBox.setContent(out);
+    }
+  
+    // ─────────────────────────────────────────────
+    // BOTTOM BARS
+    // ─────────────────────────────────────────────
+    const hints = [
+      'DexScreener prices  │  30s auto-refresh  │  R=refresh now',
+      'I=enter wallet address  │  R=refresh  │  arrows=scroll',
+      'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll',
+      'Terminal news & signals  │  arrows=scroll',
+      'Live event stream  │  arrows=scroll',
+      'Smart alerts  │  R=refresh',
+      'Solana RPC stats  │  R=refresh  │  30s auto-refresh',
+      'Ask Solana AI Assistant',
+    ];
   const cmdBar = blessed.box({
     parent: root, bottom: 1, left: 0, width: '100%', height: 1,
     tags: true, style: BOX,
@@ -805,21 +959,20 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   // TAB MANAGEMENT
   // ─────────────────────────────────────────────
-  let current = 0;
-  const allTabs    = [tabMarket, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork];
-  const allScrolls = [mktScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll];
+  const allTabs    = [tabMarket, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork, tabAi];
+  const allScrolls = [mktScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll, null];
 
   function activateTab(idx) {
     current = idx;
     allTabs.forEach((t, i) => (i === idx ? t.show() : t.hide()));
-    let activeScroll = allScrolls[idx] || null;
+    activeScroll = allScrolls[idx] || null;
     if (activeScroll) activeScroll.setScrollPerc(0);
 
-    const names = ['MARKET','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK'];
+    const names = ['MARKET','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK', 'ASK AI'];
     let nav = '';
     names.forEach((n, i) => {
       nav += i === idx
-        ? ` {#00FF88-bg}{black-fg}{bold} F${i+1} ${n} {/}`
+        ? ` {#FFFFFF-fg}{#0066CC-bg}{bold} F${i+1} ${n} {/}`
         : ` {#002222-bg}{#00FFFF-fg} F${i+1} {/}{white-fg} ${n} {/}`;
     });
     navContent.setContent(nav);
@@ -837,14 +990,15 @@ function startDashboard() {
   screen.key(['f5'], () => activateTab(4));
   screen.key(['f6'], () => activateTab(5));
   screen.key(['f7'], () => activateTab(6));
+  screen.key(['f8'], () => activateTab(7));
   screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
 
   screen.key(['i', 'I'], () => {
-    if (current === 2) {
+    if (current === 1) { // Wallet tab
       getLineInput(screen, 'Enter Solana wallet address (base58 public key):', addr => {
         if (addr) loadWallet(addr); else buildWalletTab(); screen.render();
       });
-    } else if (current === 3) {
+    } else if (current === 2) { // Token tab
       getLineInput(screen, 'Enter token mint address or symbol (e.g. BONK / WIF / JUP):', val => {
         if (val) loadToken(val); else buildTokenTab(); screen.render();
       });
@@ -856,6 +1010,14 @@ function startDashboard() {
     else if (current === 1 && walletAddr) loadWallet(walletAddr);
     else if (current === 2 && tokenQuery) loadToken(tokenQuery);
     else if (current === 6) refreshNetwork();
+  });
+
+  screen.key(['t', 'T'], () => {
+    if (current === 2 && tokenQuery && !tokenLoading) {
+      const tfs = ['5M', '1H', '1D'];
+      const nextIdx = (tfs.indexOf(tokenTimeframe) + 1) % 3;
+      loadToken(null, tfs[nextIdx]);
+    }
   });
 
   // ─────────────────────────────────────────────
@@ -912,7 +1074,7 @@ function startDashboard() {
   activateTab(0);
   buildNewsTab(); buildAlertsTab();
   buildMarketTable(); buildStatsRow(); buildNetworkTab();
-  buildWalletTab(); buildTokenTab();
+  buildWalletTab(); buildTokenTab(); buildAiTab();
   screen.render();
 
   Promise.all([refreshMarket(), refreshNetwork()]).then(() => screen.render());

@@ -344,7 +344,7 @@ async function fetchMarketData() {
 // ═════════════════════════════════════════════════════════
 // TOKEN DATA — DexScreener for single token (F4)
 // ═════════════════════════════════════════════════════════
-async function fetchTokenData(mintOrSymbol) {
+async function fetchTokenData(mintOrSymbol, timeframe = '1H') {
   // Resolve symbol → mint if needed
   let mint = mintOrSymbol;
   if (TOKEN_MINTS[mintOrSymbol?.toUpperCase()]) {
@@ -396,6 +396,39 @@ async function fetchTokenData(mintOrSymbol) {
 
   const shortMint = mint.length > 12 ? mint.slice(0, 6) + '...' + mint.slice(-4) : mint;
 
+  // Enhance with Pool Age & Txns
+  const ageDays = top.pairCreatedAt ? Math.floor((Date.now() - top.pairCreatedAt) / (1000 * 60 * 60 * 24)) : 0;
+  const poolAge = ageDays > 0 ? `${ageDays} Days` : 'New (<24h)';
+  const txns = top.txns?.h24 || { buys: 0, sells: 0 };
+
+  // Fetch OHLCV Historical Data via GeckoTerminal
+  let historical = [];
+  let historicalCandles = [];
+  try {
+    if (top.pairAddress) {
+      let endpoint = '/ohlcv/hour?limit=24';
+      if (timeframe === '5M') endpoint = '/ohlcv/minute?aggregate=5&limit=30';
+      if (timeframe === '1H') endpoint = '/ohlcv/hour?aggregate=1&limit=30';
+      if (timeframe === '1D') endpoint = '/ohlcv/day?aggregate=1&limit=30';
+
+      const geco = await httpsGet(`https://api.geckoterminal.com/api/v2/networks/solana/pools/${top.pairAddress}${endpoint}`);
+      if (geco?.data?.attributes?.ohlcv_list) {
+        const list = geco.data.attributes.ohlcv_list.sort((a,b) => a[0] - b[0]);
+        historical = list.map(candle => candle[4]); // Close price
+        historicalCandles = list.map(c => ({
+          t: c[0],
+          o: c[1],
+          h: c[2],
+          l: c[3],
+          c: c[4],
+          v: c[5]
+        }));
+      }
+    }
+  } catch (e) {
+    // Silently proceed without historical chart if rate limited
+  }
+
   return {
     symbol,
     name,
@@ -414,6 +447,11 @@ async function fetchTokenData(mintOrSymbol) {
     riskSignals,
     dexPools,
     rawPairs: pairs,
+    historical,
+    historicalCandles,
+    poolAge,
+    txns,
+    timeframe,
   };
 }
 
