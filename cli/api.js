@@ -1555,7 +1555,6 @@ async function fetchTransactionDetails(signature) {
       if (ix.parsed && ix.parsed.info) {
         if (ix.parsed.type) name += `: ${ix.parsed.type.charAt(0).toUpperCase() + ix.parsed.type.slice(1)}`;
         for (const [k, v] of Object.entries(ix.parsed.info)) {
-           // beautify keys
            let cleanKey = k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
            let cleanVal = String(v);
            if (k === 'lamports') {
@@ -1594,6 +1593,7 @@ async function fetchTransactionDetails(signature) {
 }
 
 module.exports = {
+  rpcCall,
   fetchFairScaleScore,
   fetchAIResponse,
   fetchCMCMacroData,
@@ -1609,11 +1609,178 @@ module.exports = {
   fetchArticleContent,
   NEWS_SOURCES,
   fetchDexMovers,
+  fetchTokenSearch: fetchTokenData,
   fetchTopSolanaTokens,
   fetchTrendingTokens,
   startLiveStream,
   fetchBitqueryWhales,
   fetchTwitterRSS,
   fetchLatestTransactions,
-  fetchTransactionDetails
+  fetchTransactionDetails,
+  fetchValidatorGeoData
 };
+
+// ═════════════════════════════════════════════════════════
+// VALIDATOR GEO DATA & LEADER TRACKING
+// ═════════════════════════════════════════════════════════
+const VAL_NAMES = {
+  'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy': 'Jito Labs',
+  '9UM8wQ8F5oMiRcP5YdqD6Lr4krpBWCD8LtgQYoisJd9i': 'Coinbase',
+  'LaineVpGbtHN8YpZpY3Xn7U6jZfWp6P9P9pZ8okm21hy': 'Laine',
+  'Figment1111111111111111111111111111111111111': 'Figment',
+  'Chorus11111111111111111111111111111111111111': 'Chorus One',
+  '7qGNn11111111111111111111111111111111111111': 'Everstake',
+  'Ninja1spj6n9t5hVYgF3PdnYz2PLnkt7rvaw3firmjs': 'NinjaNodes',
+  'Staked1111111111111111111111111111111111111': 'Staked.us',
+  'HbT1111111111111111111111111111111111111111': 'Helius',
+  'BPpsgSJwBF1Q9ch5w6ghzBJjF3ghkEFREarPDMvqqwBE': 'Solana Foundation'
+};
+
+async function fetchValidatorGeoData() {
+  try {
+    const nodes = await rpcCall('getClusterNodes', []);
+    const totalNodes = (nodes || []).length;
+
+    // ── LEADER SCHEDULE (DEEP BUFFER FOR SIMULATION) ───────────
+    let currentLeaderPubkey = null;
+    let upcomingLeaders = [];
+    let currentSlot = 0;
+    let leaderSchedule = [];
+    try {
+      currentSlot = await rpcCall('getSlot', []);
+      leaderSchedule = await rpcCall('getSlotLeaders', [currentSlot, 5000]); // 5000 slots = ~33 mins
+      
+      if (leaderSchedule && leaderSchedule.length > 0) {
+        currentLeaderPubkey = leaderSchedule[0];
+        
+        // Find next 10 unique identity-bearing leaders for the ribbon
+        const unique = [];
+        const seen = new Set([currentLeaderPubkey]);
+        for (const pubkey of leaderSchedule) {
+          if (!seen.has(pubkey)) {
+            unique.push(pubkey);
+            seen.add(pubkey);
+          }
+          if (unique.length >= 10) break;
+        }
+        upcomingLeaders = unique;
+      }
+    } catch(e) { console.error('Schedule Fetch Failed:', e.message); }
+
+    const leaderPubkeys = [currentLeaderPubkey, ...upcomingLeaders].filter(Boolean);
+    const leaderIps = [];
+    const nodeMap = {}; 
+    (nodes || []).forEach(n => {
+      const addr = n.gossip || n.tpu || n.rpc;
+      if (addr) {
+        const ip = addr.split(':')[0];
+        nodeMap[n.pubkey] = ip;
+        if (leaderPubkeys.includes(n.pubkey)) leaderIps.push({ pubkey: n.pubkey, ip });
+      }
+    });
+
+    // ── IP EXTRACTION ──────────────────────────────
+    const ips = [];
+    for (const node of (nodes || [])) {
+      const addrs = [node.gossip, node.tpu, node.rpc].filter(Boolean);
+      for (const addr of addrs) {
+        const ip = addr.split(':')[0];
+        if (ip && ip.length > 6 && !ip.startsWith('127.') && !ip.startsWith('0.') && !ip.startsWith('::')) {
+          const isPrivate = ip.startsWith('10.') || ip.startsWith('192.168.') || 
+                            /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip) || 
+                            ip.startsWith('100.') || ip.startsWith('169.254.');
+          if (!isPrivate) {
+            ips.push(ip);
+            break;
+          }
+        }
+      }
+    }
+
+    const uniqueIps = [...new Set(ips)];
+    
+    // -- Local Geocoding Cache for persistence --
+    const fs = require('fs');
+    const path = require('path');
+    const GEO_CACHE_FILE = path.join(__dirname, 'geo_cache.json');
+    let cache = {};
+    try { cache = JSON.parse(fs.readFileSync(GEO_CACHE_FILE, 'utf8')); } catch(e) {}
+    
+    const geoQueue = [...uniqueIps];
+    leaderIps.forEach(l => { if (!geoQueue.includes(l.ip)) geoQueue.push(l.ip); });
+
+    const geoPoints = [];
+    const ipGeoMap = {};
+    const toFetch = [];
+    
+    for (const ip of geoQueue) {
+      if (cache[ip]) {
+        ipGeoMap[ip] = cache[ip];
+        geoPoints.push(cache[ip]);
+      } else {
+        toFetch.push(ip);
+      }
+    }
+    
+    const fetchLimit = toFetch.slice(0, 150); // limit new API calls per cycle
+
+    for (let i = 0; i < fetchLimit.length; i += 45) {
+      const batch = fetchLimit.slice(i, i + 45).map(q => ({ query: q, fields: 'lat,lon,country,countryCode,city,status' }));
+      try {
+        const http = require('http');
+        const body = JSON.stringify(batch);
+        const results = await new Promise((resolve, reject) => {
+          const req = http.request({
+            hostname: 'ip-api.com', path: '/batch', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: 10000
+          }, res => {
+            let d = '';
+            res.on('data', c => d += c);
+            res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve([]); } });
+          });
+          req.on('error', () => resolve([]));
+          req.on('timeout', () => { req.destroy(); resolve([]); });
+          req.write(body);
+          req.end();
+        });
+        (results || []).forEach((r, idx) => {
+          const qIp = fetchLimit[i + idx];
+          if (r.status === 'success' && r.lat && r.lon) {
+            const pt = { lat: parseFloat(r.lat), lon: parseFloat(r.lon), country: r.country || '?', city: r.city || '?' };
+            ipGeoMap[qIp] = pt;
+            geoPoints.push(pt);
+            cache[qIp] = pt;
+          }
+        });
+      } catch(e) { /* skip */ }
+    }
+    
+    try { fs.writeFileSync(GEO_CACHE_FILE, JSON.stringify(cache), 'utf8'); } catch(e) {}
+
+    // Map leaders to their coordinates and names
+    const leaders = leaderIps.map((l, idx) => {
+      const geo = ipGeoMap[l.ip];
+      const name = VAL_NAMES[l.pubkey] || (l.pubkey.slice(0, 4) + '...' + l.pubkey.slice(-4));
+      return geo ? { ...geo, pubkey: l.pubkey, name, isCurrent: l.pubkey === currentLeaderPubkey } : null;
+    }).filter(Boolean);
+
+    const byCountry = {};
+    for (const pt of geoPoints) { byCountry[pt.country] = (byCountry[pt.country] || 0) + 1; }
+    const countryList = Object.entries(byCountry).sort((a,b) => b[1]-a[1]).slice(0, 12);
+
+    return { 
+      totalNodes, 
+      rpcNodes: (nodes || []).filter(n => !n.tpu).length,
+      geoPoints, 
+      countryList, 
+      leaders, 
+      currentSlot, 
+      leaderSchedule,
+      sampleSize: geoPoints.length 
+    };
+  } catch(e) {
+    return { totalNodes: 0, geoPoints: [], countryList: [], leaders: [], currentSlot: 0, leaderSchedule: [], sampleSize: 0 };
+  }
+}
+

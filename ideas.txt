@@ -1,0 +1,3 @@
+1. Stake to validators diretcly from CLI
+2. Buy sell meme tokens
+3. directkly swap from cli

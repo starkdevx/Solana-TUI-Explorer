@@ -13,6 +13,57 @@ chalk.level = 3;
 const { DATA, loadMarketData, loadNetworkData, loadWalletData, loadTokenData, loadNewsData } = require('../data');
 const CFG = require('../config');
 
+// Embedded land grid (120x38)
+const LAND_HEX = [
+  "000000007c07f00000000000000000",
+  "00000077effff800c0000006000000",
+  "00001808007ff8000002007f800000",
+  "03fdf7dcbc3ff0003e00bfffffffa6",
+  "9fffffffffffffff10800000000000",
+  "07bffff838040003dfffffffffff38",
+  "0000fffe3f0000209fffffffffc0c0",
+  "00007fffbfc00037fffffffffff000",
+  "00001ffff440001fffffffffffd000",
+  "00001ffff0000078b837ffffff3000",
+  "00001fffc000007017f3ffffe62000",
+  "000007ffc000007f00fffffff18000",
+  "000001f08000007ffff7fffff80000",
+  "000000f0000001fffffa3fffe80000",
+  "00000072200001ffff7e0f9e000000",
+  "00000007000003ffffb8060f000000",
+  "00000001100001ffffc80603040000",
+  "000000003f8000fffff00004040000",
+  "000000003fe00001ffe00002600000",
+  "000000007ff80001ffc0000260c000",
+  "000000007fff0000ff800001003800",
+  "000000003fff00007f800000000000",
+  "000000001ffe0000ff980000079000",
+  "0000000007fe0000ff1000000ff800",
+  "0000000007f000007e1000003ffe00",
+  "000000000ff000003e0000003ffe00",
+  "000000000fc0000038000000387c00",
+  "000000000f80000000000000001802",
+  "000000001e00000000000000000804",
+  "000000001c00000000000000000000",
+  "000000001880000000000000000000",
+  "000000000000000000000000000000",
+  "000000000000000000000000000000",
+  "000000000000000000000000000000",
+  "000000000e00000001ffe3ffffff80",
+  "0000003fff0001fffffffffffffff0",
+  "02ffffffc008ffffffffffffffffe0",
+  "007fffffffffffffffffffffffffe0"
+];
+const GRA_W = 120, GRA_H = 38;
+const GRA_LAND = LAND_HEX.map(hex => {
+  const bits = [];
+  for (let i = 0; i < hex.length; i += 2) {
+    const byte = parseInt(hex.slice(i, i+2), 16);
+    for (let b = 7; b >= 0; b--) bits.push((byte >> b) & 1);
+  }
+  return bits.slice(0, GRA_W);
+});
+
 // Internal RPC helper from api.js — used by live section directly
 const { fetchEpochInfo: _fetchEpochInfo } = require('../api');
 // rpcCall helper re-exposed for live section's pollLiveStats
@@ -58,7 +109,7 @@ const W    = s => `{white-fg}{bold}${String(s)}{/}`;
 const WW   = s => `{white-fg}${String(s)}{/}`;
 const Y    = s => `{#FFD700-fg}${String(s)}{/}`;
 const DN   = s => `{#FF6B6B-fg}${String(s)}{/}`;
-const GRY  = s => `{#999999-fg}${String(s)}{/}`;
+const GRY  = s => `{white-fg}${String(s)}{/}`;
 // Aliases for header/accent usage
 const O    = Y;
 const OB   = s => `{#FFD700-fg}{bold}${String(s)}{/}`;
@@ -82,6 +133,26 @@ const BCYAN = { type: 'line', fg: '#00FFFF' };
 const BDIM  = { type: 'line', fg: '#005566' };
 
 // ─────────────────────────────────────────────
+// STATE & SIMULATION ENGINE
+// ─────────────────────────────────────────────
+let simulatedSlot = 0;
+let heartbeatInterval = null;
+let current = 0; // Global tab state tracker
+let validatorGeoData = null;
+let validatorGeoLoading = false;
+
+// startHeartbeat is defined inside startDashboard() where
+// buildNetworkTab and screen are in scope. This stub is intentionally empty.
+function startHeartbeat() { /* real impl inside startDashboard */ }
+
+// Progress Bar
+function progressBar(pct, width = 20) {
+  const filled = Math.round(Math.max(0, Math.min(100, pct || 0)) / 100 * width);
+  const empty  = Math.max(0, width - filled);
+  return `{#00FF88-fg}${'█'.repeat(filled)}{/}{#114422-fg}${'░'.repeat(empty)}{/}`;
+}
+
+// ─────────────────────────────────────────────
 // FORMATTERS
 // ─────────────────────────────────────────────
 const pad      = (s, n) => String(s == null ? '-' : s).padEnd(n);
@@ -99,11 +170,7 @@ const nowTime  = () => new Date().toLocaleTimeString('en-US', { hour12: false })
 // ─────────────────────────────────────────────
 // PROGRESS BAR
 // ─────────────────────────────────────────────
-function progressBar(pct, width = 36) {
-  const filled = Math.round(Math.max(0, Math.min(100, pct || 0)) / 100 * width);
-  const empty  = Math.max(0, width - filled);
-  return `{#00FF88-fg}${'█'.repeat(filled)}{/}{#114422-fg}${'░'.repeat(empty)}{/}`;
-}
+// (Already defined above)
 
 // ─────────────────────────────────────────────
 // FILLED BAR CHART
@@ -188,6 +255,199 @@ function barFillChart(values, labels, opts = {}) {
 
   return out;
 }
+
+// ─────────────────────────────────────────────
+// ASCII WORLD MAP & LEADER SIDEBAR
+// ─────────────────────────────────────────────
+function buildAsciiWorldMap(geoPoints, leaders = []) {
+  const MAP_W   = 92;
+  const MAP_H   = 22;
+  const SIDE_W  = 28;
+  const LAT_MAX =  75;
+  const LAT_MIN = -55;
+  const LON_MIN = -180;
+  const LON_MAX =  180;
+
+  const latToRow = lat => Math.max(0, Math.min(MAP_H - 1, Math.round((LAT_MAX - lat) / (LAT_MAX - LAT_MIN) * (MAP_H - 1))));
+  const lonToCol = lon => Math.max(0, Math.min(MAP_W - 1, Math.round((lon - LON_MIN) / (LON_MAX - LON_MIN) * (MAP_W - 1))));
+
+  const LAND = [
+    [-168,-140, 60, 72], [-140,-120, 54, 60], [-120, -95, 49, 60],
+    [-95,  -75, 43, 50], [-75,  -55, 47, 58], [-55,  -52, 46, 52],
+    [-125, -100, 35, 50], [-100, -80, 25, 45], [-80,  -60, 30, 47],
+    [-120,  -86, 15, 30], [-90,  -77,  8, 18], [-84,  -66,  9, 22],
+    [-170, -155, 55, 65],
+    [-82,  -34, -5, 12], [-81,  -50,-30,  5], [-73,  -34,-57,-28],
+    [-68,  -40,-55,-25], [-80,  -72,-55,-42],
+    [-10,   35, 35, 72], [-5,    30, 44, 65], [10,    30, 55, 72],
+    [20,    40, 57, 70], [28,    32, 36, 42], [15,    25, 38, 42],
+    [5,     15, 42, 47], [-5,     8, 43, 48],
+    [-18,   50,-35, 38], [-18,   10,  4, 16], [10,    42,-10, 15],
+    [28,    40,  0, 12], [40,    52,  2, 15], [38,    52,-12,  5],
+    [12,    40,-36,-12],
+    [28,    50, 40, 72], [50,   100, 50, 72], [100,  140, 52, 72],
+    [140,  180, 50, 72], [130,  170, 42, 58], [108,  135, 18, 52],
+    [60,   100, 22, 52], [44,    65, 28, 42], [52,    80,  8, 28],
+    [66,    80,  8, 14],
+    [95,   110,  0, 22], [100,  120,  0, 15], [105,  120, -8,  5],
+    [115,  125, -4,  2], [120,  142, -8,  2],
+    [124,  132, 34, 42], [130,  146, 31, 46], [88,   101, 15, 28],
+    [113,  154,-44,-10], [144,  180,-45,-15], [166,  178,-47,-34],
+    [-52,  -17, 60, 84], [-25,  -13, 63, 65], [-25,  -13, 63, 67]
+  ];
+
+  const grid = Array.from({ length: MAP_H }, () => new Uint8Array(MAP_W));
+  for (const [minLon, maxLon, minLat, maxLat] of LAND) {
+    const r1 = latToRow(maxLat), r2 = latToRow(minLat);
+    const c1 = lonToCol(minLon), c2 = lonToCol(maxLon);
+    for (let r = Math.min(r1,r2); r <= Math.max(r1,r2); r++)
+      for (let c = Math.min(c1,c2); c <= Math.max(c1,c2); c++)
+        grid[r][c] = 1;
+  }
+
+  // --- Sidebar Logic ---
+  const geo = validatorGeoData || {};
+  const schedule = geo.leaderSchedule || [];
+  const baseSlot = geo.currentSlot || 0;
+  const geoLeaders = geo.leaders || [];
+
+  const offset = simulatedSlot > 0 ? Math.max(0, simulatedSlot - baseSlot) : 0;
+  const currentPubkey = schedule[offset] || null;
+
+  // We use geoPoints natively now to project all identity markers
+  // leaderGrid has been completely deprecated in the new string algo
+
+  const resolveLeader = (pubkey) => {
+    if (!pubkey) return null;
+    const found = geoLeaders.find(l => l.pubkey === pubkey);
+    return found || { name: pubkey.slice(0,6) + '…' + pubkey.slice(-4), city: '' };
+  };
+
+  const cur = resolveLeader(currentPubkey);
+  const nextPubkeys = [];
+  const seen = new Set([currentPubkey]);
+  for (let i = offset + 1; i < Math.min(schedule.length, offset + 20) && nextPubkeys.length < 4; i++) {
+    const p = schedule[i];
+    if (p && !seen.has(p)) { nextPubkeys.push(p); seen.add(p); }
+  }
+
+  // Build Sidebar text lines (width 32)
+  const padRight = (str, len) => str + ' '.repeat(Math.max(0, len - String(str).replace(/\{[^}]+\}/g, '').length));
+  
+  const clusterTotal = geo.totalNodes || 0;
+  const vTotal = DATA.networkStats?.validators?.length || clusterTotal;
+  const rpcCount = geo.rpcNodes !== undefined ? geo.rpcNodes : Math.max(0, clusterTotal - vTotal);
+  
+  let sb = [];
+  sb.push(` {#00FFFF-fg}{bold}${vTotal}{/}  {white-fg}Validators{/}`);
+  sb.push(` {#00FFFF-fg}{bold}${rpcCount}{/}  {white-fg}RPC Nodes{/}`);
+  sb.push('');
+  sb.push(` {#FFFFFF-bg}{#000000-fg} ⬡ SLOT ${simulatedSlot.toLocaleString()} {/}`);
+  sb.push('');
+  sb.push(' {white-fg}Current Leader{/}');
+  if (cur) {
+    sb.push(` {#00FFaa-fg}{bold} ◉ ${cur.name}{/}`);
+    if (cur.city && cur.city !== '??') sb.push(`   {#00FFFF-fg}${cur.city}{/}`);
+    else sb.push('');
+  } else {
+    sb.push(' {white-fg}Loading...{/}');
+    sb.push('');
+  }
+  sb.push('');
+  sb.push(' {white-fg}Next Leaders{/}');
+  nextPubkeys.forEach(p => {
+    const l = resolveLeader(p);
+    sb.push(` {#FFFFFF-fg} › ${l.name}{/}`);
+  });
+  
+  while (sb.length < MAP_H) sb.push('');
+
+  // --- Render to String Map ---
+  let out = '\n';
+  
+  const LAND_DOT  = '\u25cf';
+  const NODE_VAL  = '\u25cf';
+  const SPOTLIGHT = '\u272A'; // ✪ (Circled Star)
+  const C_LAND = '{#4a6b8a-fg}'; // Exact blue-gray from gra.js
+  const C_END  = '{/}';
+  const C_SPOT = '{yellow-fg}';
+  const C_VAL  = '{cyan-fg}';
+
+  const mapCols = Math.floor(MAP_W / 2);
+  const mapRows = Math.min(MAP_H, GRA_H);
+
+  const geoGrid = {};
+  let currentFound = false;
+  for (const p of geoPoints) {
+    if (p.lat && p.lon) {
+      let col = Math.round((p.lon + 179) / 358 * (GRA_W - 1));
+      let row = Math.round((83 - p.lat) / 166 * (GRA_H - 1));
+      let rc = Math.round(col / GRA_W * mapCols);
+      let rr = Math.round(row / GRA_H * mapRows);
+      
+      let existing = geoGrid[`${rr},${rc}`];
+      let isCur = p.pubkey === currentPubkey;
+      if (isCur) currentFound = true;
+      if (!existing || isCur) {
+         geoGrid[`${rr},${rc}`] = { ...p, isCurrent: isCur };
+      }
+    }
+  }
+
+  // If the current leader is not in our Top 200 resolved GeoIP subset,
+  // map them deterministically via pubkey hash so the simulation heartbeat never dies.
+  if (currentPubkey && !currentFound) {
+    const hash = currentPubkey.split('').reduce((a,b) => a + b.charCodeAt(0), 0);
+    const fallbacks = [
+      {lat: 40.71, lon: -74.01}, {lat: 37.77, lon: -122.41}, {lat: 51.51, lon: -0.13},
+      {lat: 35.68, lon: 139.69}, {lat: 1.35, lon: 103.82}, {lat: -33.87, lon: 151.21},
+      {lat: 52.52, lon: 13.40}, {lat: 48.86, lon: 2.35}, {lat: 22.28, lon: 114.16}
+    ];
+    let fb = fallbacks[hash % fallbacks.length];
+    let col = Math.round((fb.lon + 179) / 358 * (GRA_W - 1));
+    let row = Math.round((83 - fb.lat) / 166 * (GRA_H - 1));
+    let rc = Math.round(col / GRA_W * mapCols);
+    let rr = Math.round(row / GRA_H * mapRows);
+    geoGrid[`${rr},${rc}`] = { pubkey: currentPubkey, isCurrent: true };
+  }
+
+  out += `  {white-fg}┌${'─'.repeat(SIDE_W)}┬${'─'.repeat(MAP_W)}┐{/}\n`;
+  for (let r = 0; r < mapRows; r++) {
+    const rawSbLine = sb[r] || '';
+    const plainLen = rawSbLine.replace(/\{[^}]+\}/g, '').length;
+    const padding = ' '.repeat(Math.max(0, SIDE_W - plainLen - 1));
+    out += `  {white-fg}│{/}${rawSbLine}${padding}{white-fg}│{/}`;
+
+    for (let c = 0; c < mapCols; c++) {
+      const gc = Math.round(c / mapCols * GRA_W);
+      const gr = Math.round(r / mapRows * GRA_H);
+      const isLand = GRA_LAND[gr] && GRA_LAND[gr][gc];
+
+      let isSpot = false;
+      let isNode = false;
+      
+      const node = geoGrid[`${r},${c}`];
+      if (node) {
+        isNode = true;
+        if (node.isCurrent) isSpot = true;
+      }
+      
+      if (isSpot) {
+        out += C_SPOT + SPOTLIGHT + ' ' + C_END;
+      } else if (isNode) {
+        out += C_VAL + NODE_VAL + ' ' + C_END;
+      } else if (isLand) {
+        out += C_LAND + LAND_DOT + ' ' + C_END;
+      } else {
+        out += '  ';
+      }
+    }
+    out += `{white-fg}│{/}\n`;
+  }
+  out += `  {white-fg}└${'─'.repeat(SIDE_W)}┴${'─'.repeat(MAP_W)}┘{/}\n`;
+  return out;
+} // end buildAsciiWorldMap
+
 
 // ─────────────────────────────────────────────
 // CANDLESTICK CHART
@@ -319,7 +579,7 @@ function candleChart(candles, opts = {}) {
 // BANNERS
 // ─────────────────────────────────────────────
 function errorBanner(msg) {
-  return `\n ${RED_BG('ERROR')}  {#FF6B6B-fg}${msg}{/}\n\n {white-fg}Press{/} {#FFD700-fg}R{/} {white-fg}to retry    {/}{#999999-fg}up/down to scroll{/}\n`;
+  return `\n ${RED_BG('ERROR')}  {#FF6B6B-fg}${msg}{/}\n\n {white-fg}Press{/} {#FFD700-fg}R{/} {white-fg}to retry    {/}{white-fg}up/down to scroll{/}\n`;
 }
 function loadingBanner(msg) {
   return `\n ${TL_BG('LOADING')}  {#00FFFF-fg}${msg || 'Fetching live data...'}{/}\n\n {white-fg}Connecting to Solana mainnet & DexScreener...{/}\n`;
@@ -354,7 +614,7 @@ function createAnimatedLoader(screen, box, msg, tips) {
     out += '\n';
     out += `  {${clr}-fg}{bold}${spin}{/}  {white-fg}{bold}${msg}{/}\n`;
     out += '\n';
-    out += `  {#888888-fg}${tip}{/}\n`;
+    out += `  {white-fg}${tip}{/}\n`;
     out += '\n';
     out += `  {${clr}-fg}${barFull}{/}\n`;
 
@@ -839,7 +1099,7 @@ function startDashboard() {
         diamond:  { clr: '{#E5E4E2-fg}', bg: '{#333333-bg}', sym: '💎' },
         platinum: { clr: '{#7FFFD4-fg}', bg: '{#002222-bg}', sym: '💠' },
         gold:     { clr: '{#FFD700-fg}', bg: '{#222200-bg}', sym: '📀' },
-        silver:   { clr: '{#C0C0C0-fg}', bg: '{#222222-bg}', sym: '💿' },
+        silver:   { clr: '{#C0C0C0-fg}', bg: '', sym: '💿' },
         bronze:   { clr: '{#CD7F32-fg}', bg: '{#111111-bg}', sym: '🔘' }
       };
       const cfg = TIER_CONFIG[tier] || TIER_CONFIG.bronze;
@@ -1266,7 +1526,7 @@ function startDashboard() {
     d += `  {white-fg}{bold}${item.title || ''}{/}\n\n`;
 
     // Meta
-    d += `  {#999999-fg}${dateStr}{/}`;
+    d += `  {white-fg}${dateStr}{/}`;
     const prioClr = item.priority === 'high' ? '#FF6B6B' : item.priority === 'medium' ? '#FFD700' : '#666666';
     d += `   {${prioClr}-fg}● ${(item.priority || 'low').toUpperCase()} PRIORITY{/}\n`;
     d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
@@ -1303,7 +1563,7 @@ function startDashboard() {
     d += `  {#00FFFF-fg}{bold}LINK:{/}\n`;
     d += `  {#00FF88-fg}${item.link}{/}\n\n`;
     d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n`;
-    d += `  {#666666-fg}Press ESC or Q to close this article    ·    Navigate with ↑↓    ·    Copy link above to open in browser{/}\n\n`;
+    d += `  {white-fg}Press ESC or Q to close this article    ·    Navigate with ↑↓    ·    Copy link above to open in browser{/}\n\n`;
     return d;
   }
 
@@ -1356,8 +1616,8 @@ function startDashboard() {
     // Status header
     const statusDot = newsLoading ? `{#FFAA00-fg}⟳ LOADING{/}` : `{#00FF88-fg}● LIVE{/}`;
     const lastStr   = DATA.newsLastUpdated
-      ? `{#999999-fg}Updated ${relTime(DATA.newsLastUpdated)} ago{/}`
-      : `{#999999-fg}Loading...{/}`;
+      ? `{white-fg}Updated ${relTime(DATA.newsLastUpdated)} ago{/}`
+      : `{white-fg}Loading...{/}`;
 
     out += OB(' TERMINAL NEWS');
     out += `  ${statusDot}  {#00FFFF-fg}5 Sources{/}  {#9945FF-fg}${solCnt} Solana{/}  ${lastStr}`;
@@ -1398,7 +1658,7 @@ function startDashboard() {
       const cnt = DATA.news.filter(n => n.source === s).length;
       if (cnt > 0) {
         const c = sourceColor(s);
-        out += `{${c}-fg}${s}{/} {#666666-fg}(${cnt}){/}   `;
+        out += `{${c}-fg}${s}{/} {white-fg}(${cnt}){/}   `;
       }
     });
     out += '\n\n';
@@ -1477,7 +1737,7 @@ function startDashboard() {
   const liveStreamBox = blessed.box({
     parent: tabLive, top: 4, left: 0, right: 0, bottom: 0,
     tags: true, border: { type: 'line' },
-    label: ' {#FFD700-fg}{bold}⚡ LIVE ON-CHAIN STREAM{/}  {#999999-fg}Raydium · Orca · Jupiter · Pump.fun{/} ',
+    label: ' {#FFD700-fg}{bold}⚡ LIVE ON-CHAIN STREAM{/}  {white-fg}Raydium · Orca · Jupiter · Pump.fun{/} ',
     style: { bg: '#000D0D', fg: 'white', border: { fg: '#FFD700' } },
     scrollable: true, alwaysScroll: true, mouse: true,
     scrollbar: { ch: '│', style: { fg: '#FFD700' } },
@@ -1521,7 +1781,7 @@ function startDashboard() {
                    liveWssStatus === 'ERROR'         ? `{#FF6B6B-fg}● ERROR{/}` :
                    liveWssStatus === 'RECONNECTING'  ? `{#FF6B6B-fg}⟳ RECONNECTING{/}` :
                    `{#FFAA00-fg}⟳ CONNECTING{/}`;
-    const evCnt = liveWssCount ? `{#888888-fg}  ${liveWssCount} events{/}` : '';
+    const evCnt = liveWssCount ? `{white-fg}  ${liveWssCount} events{/}` : '';
     liveHeader.setContent(
       ` {#9945FF-fg}{bold}◈ LIVE TRADING TERMINAL{/}   SOL: ${price} ${pct}   ${wssDot}${evCnt}  ` +
       `{#AAAAAA-fg}Slot: ${liveSlot ? liveSlot.toLocaleString() : '...'}  TPS: ${liveTps || '...'}  mainnet-beta{/}`
@@ -1544,13 +1804,13 @@ function startDashboard() {
     }
 
     const tpsClr  = liveTps > 3000 ? '#00FF88' : liveTps > 1000 ? '#FFD700' : '#FF6B6B';
-    const slotStr = liveSlot ? `{#00FFFF-fg}${liveSlot.toLocaleString()}{/}` : `{#888888-fg}fetching...{/}`;
+    const slotStr = liveSlot ? `{#00FFFF-fg}${liveSlot.toLocaleString()}{/}` : `{white-fg}fetching...{/}`;
 
     let out = '';
     out += ` ${priceLine(sol)}    ${priceLine(btc)}    ${priceLine(eth)}  \n`;
-    out += ` {#999999-fg}Slot:{/} ${slotStr}  ` +
-           `{#999999-fg}TPS:{/} {${tpsClr}-fg}${liveTps || '...'}{/}  ` +
-           `{#999999-fg}Events Captured:{/} {#00FFFF-fg}${liveWssCount}{/}`;
+    out += ` {white-fg}Slot:{/} ${slotStr}  ` +
+           `{white-fg}TPS:{/} {${tpsClr}-fg}${liveTps || '...'}{/}  ` +
+           `{white-fg}Events Captured:{/} {#00FFFF-fg}${liveWssCount}{/}`;
     liveStats.setContent(out);
   }
 
@@ -1570,7 +1830,7 @@ function startDashboard() {
       const badge   = `{${style.clr}-fg}{bold}${style.badge}{/}`;
       const srcTag  = ev.source !== 'SYSTEM'
         ? `{${srcClr}-fg}${ev.source.padEnd(9)}{/}`
-        : `{#999999-fg}SYSTEM   {/}`;
+        : `{white-fg}SYSTEM   {/}`;
       
       const bracketIdx = ev.text.indexOf('[');
       const mainText = bracketIdx > -1 ? ev.text.slice(0, bracketIdx) : ev.text;
@@ -1607,7 +1867,7 @@ function startDashboard() {
     // Update sidebar live feed too
     const style = EV_STYLE[ev.type] || EV_STYLE.TX;
     const srcClr = ev.source === 'Raydium' ? '#FF6B35' : ev.source === 'Orca' ? '#00CCFF' : '#00FFFF';
-    feedLog.log(`{#999999-fg}${fmtEventTime(ev.time)}{/}  {${style.clr}-fg}${style.badge.trim()}{/}  {white-fg}${ev.text.substring(0, 24)}{/}`);
+    feedLog.log(`{white-fg}${fmtEventTime(ev.time)}{/}  {${style.clr}-fg}${style.badge.trim()}{/}  {white-fg}${ev.text.substring(0, 24)}{/}`);
 
     if (current === 4) renderLiveAll(); // only render if tab is visible
   }
@@ -1714,13 +1974,17 @@ function startDashboard() {
   const netScroll  = mkScroll(tabNetwork, { top: 0, left: 0, right: 0, bottom: 0 });
   const netBox     = mkBox(netScroll, { width: '100%-2' });
 
-  let netLoading = true, netError = null;
+  // netHasData = true once the first successful network+geo load completes.
+  // After that, we NEVER show the spinner — old data stays visible during refresh.
+  let netLoading = true, netError = null, netHasData = false;
 
-  function buildNetworkTab() {
+  function buildNetworkTab(fromHeartbeat = false) {
     let out = '';
-    out += OB(' NETWORK STATS') + `  ${WW('Solana blockchain  │  Real-time RPC data')}\n`;
+    out += OB(' NETWORK STATS') + '  ' + WW('Solana blockchain  \u2502  Real-time RPC data') + '\n';
     out += HR(88) + '\n\n';
-    if (netLoading) {
+
+    // Only show spinner when there is truly no data yet (first boot)
+    if (netLoading && !netHasData && !fromHeartbeat) {
       if (!buildNetworkTab._stopLoader) {
         buildNetworkTab._stopLoader = createAnimatedLoader(screen, netBox,
           'Fetching epoch, TPS & validators...',
@@ -1729,78 +1993,179 @@ function startDashboard() {
       netBox.height = 12; return;
     }
     if (buildNetworkTab._stopLoader) { buildNetworkTab._stopLoader(); buildNetworkTab._stopLoader = null; }
-    if (netError)   { out += errorBanner(netError); netBox.setContent(out); netBox.height = 12; return; }
+    // Show errors only if we have no prior data to display
+    if (netError && !netHasData && !fromHeartbeat) { out += errorBanner(netError); netBox.setContent(out); netBox.height = 12; return; }
 
-    const { epoch: ep, tps, blocktime: bt, supply: sp, stakeData: sd, validators } = DATA.networkStats;
+    // ── VALIDATOR WORLD MAP + LEADER RIBBON ──
+    out += ' ' + TL_BG(' VALIDATOR DISTRIBUTION - WORLD MAP ') + '\n';
+    out += ' ' + GRY('Node positions via gossip IP geolocation  (getClusterNodes + ip-api.com)') + '\n\n';
+    if (validatorGeoLoading) {
+      out += '  ' + Y('Geolocating validators via IP...') + ' ' + GRY('(~5s)') + '\n\n';
+    } else if (validatorGeoData === null) {
+      out += '  ' + GRY('Loading on first open...') + '\n\n';
+    } else if (validatorGeoData.totalNodes === 0) {
+      out += '  ' + DN('Could not fetch validator node list.') + '\n\n';
+    } else {
+      const geo = validatorGeoData;
+      const sampleSize = geo.sampleSize || 135;
+      const resolvedPct = geo.geoPoints.length > 0 ? ((geo.geoPoints.length / sampleSize) * 100).toFixed(0) : 0;
+
+      out += '  ' + C('Status') + ' ' + W('LIVE RADAR ACTIVE') + '\n\n';
+      // World Radar Map (includes Leader Sidebar)
+      out += buildAsciiWorldMap(geo.geoPoints, geo.leaders);
+      out += '\n';
+
+      // TOP REGIONS
+      out += ' ' + TL_BG(' TOP REGIONS ') + '\n\n';
+      const cols = 3, padN = 22;
+      const cRows = Math.ceil((geo.countryList || []).length / cols);
+      for (let r = 0; r < cRows; r++) {
+        let row = '  ';
+        for (let c = 0; c < cols; c++) {
+          const entry = (geo.countryList || [])[r + c * cRows];
+          if (entry) {
+            const pct = ((entry[1] / geo.geoPoints.length) * 100).toFixed(0);
+            row += C(pad(entry[0], padN)) + W(pad(String(entry[1]) + ' nodes', 12)) + progressBar(parseFloat(pct), 14) + ' ' + Y(pct + '%') + '  ';
+          }
+        }
+        out += row + '\n';
+      }
+      out += '\n';
+    }
+    out += HR(88) + '\n\n';
+
+    // ── STATIC STATS (only rebuilds on full refresh) ──
+    const ns = DATA.networkStats || {};
+    const ep  = ns.epoch     || {};
+    const tps = ns.tps       || { current: 0, average: 0, maximum: 0, minimum: 0, history: [] };
+    const bt  = ns.blocktime || { current: 0, average: 0, maximum: 0, minimum: 0, history: [] };
+    const sp  = ns.supply    || { circulating: 0, staked: 0, total: 0, circulatingPct: 0, stakedPct: 0, epoch: 0, inflationRate: 0, stakingApy: 0 };
+    const sd  = ns.stakeData || { totalStaked: '?', filterApy: '?', updated: '?' };
+    const validators = ns.validators || [];
+    const T = 20;
 
     // ── EPOCH ──
-    out += ` ${TL_BG('EPOCH')}  ${W('Epoch ' + ep.current)}   ${LBL('Time left:')} ${C(ep.timeLeft)}   ${LBL('Slots:')} ${WW((ep.slotsDone || 0).toLocaleString() + ' / ' + (ep.slotsTotal || 0).toLocaleString())}\n\n`;
-    out += ' ' + progressBar(ep.progress, 52) + `  ${G(ep.progress.toFixed(1) + '%')}\n`;
-    out += ` ${LBL('Absolute slot:')} ${WW((ep.absoluteSlot || 0).toLocaleString())}   ${GRY('Est. end: ' + ep.endTime)}\n`;
-    out += HR(88) + '\n\n';
+    if (ep && ep.current !== undefined) {
+      out += ' ' + TL_BG('EPOCH') + '  ' + W('Epoch ' + ep.current) + '   ' + LBL('Time left:') + ' ' + C(ep.timeLeft || '?') + '   ' + LBL('Slots:') + ' ' + WW(((ep.slotsDone || 0)).toLocaleString() + ' / ' + ((ep.slotsTotal || 0)).toLocaleString()) + '\n\n';
+      out += ' ' + progressBar(ep.progress || 0, 52) + '  ' + G((ep.progress || 0).toFixed(1) + '%') + '\n';
+      out += ' ' + LBL('Absolute slot:') + ' ' + WW((ep.absoluteSlot || 0).toLocaleString()) + '   ' + GRY('Est. end: ' + (ep.endTime || '?')) + '\n';
+      out += HR(88) + '\n\n';
+    }
 
-    // ── TPS CHART ── solid green bars
-    out += ` ${TL_BG('TPS')}  ${WW('Transactions per second  │  Recent performance samples')}\n\n`;
-    const T = 20;
+    // ── TPS ──
+    out += ' ' + TL_BG('TPS') + '  ' + WW('Transactions per second  \u2502  Recent performance samples') + '\n\n';
     out += ' ' + LBL(pad('CURRENT', T)) + LBL(pad('AVERAGE', T)) + LBL(pad('MAX', T)) + LBL('MIN') + '\n';
     out += ' ' + G(pad(tps.current + ' TPS', T)) + C(pad(tps.average + ' TPS', T)) + Y(pad(tps.maximum + ' TPS', T)) + DN(tps.minimum + ' TPS') + '\n\n';
-    out += barFillChart(
-      tps.history.map(h => h.value),
-      tps.history.map(h => h.ago.replace(' mins ago', 'm')),
-      { height: 10, colW: 3, gap: 0, axisW: 6, colTag: '#00FF88-fg', axisTag: '#00FFFF-fg' }
-    ) + '\n';
-    out += ' ' + LBL(pad('INTERVAL', 14)) + LBL(pad('TPS', 10)) + LBL('DELTA') + '\n';
-    out += HR(44) + '\n';
-    tps.history.forEach((h, i) => {
-      const prev  = i > 0 ? tps.history[i - 1].value : h.value;
-      const delta = i > 0 ? h.value - prev : 0;
-      const dt    = delta > 0 ? G('+' + delta) : delta < 0 ? DN(String(delta)) : GRY('─');
-      out += ' ' + WW(pad(h.ago, 14)) + G(pad(String(h.value), 10)) + dt + '\n';
-    });
+    if (tps.history && tps.history.length > 0) {
+      out += barFillChart(
+        tps.history.map(function(h) { return h.value; }),
+        tps.history.map(function(h) { return h.ago.replace(' mins ago', 'm'); }),
+        { height: 10, colW: 3, gap: 0, axisW: 6, colTag: '#00FF88-fg', axisTag: '#00FFFF-fg' }
+      ) + '\n';
+      out += ' ' + LBL(pad('INTERVAL', 14)) + LBL(pad('TPS', 10)) + LBL('DELTA') + '\n';
+      out += HR(44) + '\n';
+      tps.history.forEach(function(h, i) {
+        const prev  = i > 0 ? tps.history[i - 1].value : h.value;
+        const delta = i > 0 ? h.value - prev : 0;
+        const dt    = delta > 0 ? G('+' + delta) : delta < 0 ? DN(String(delta)) : GRY('\u2500');
+        out += ' ' + WW(pad(h.ago, 14)) + G(pad(String(h.value), 10)) + dt + '\n';
+      });
+    }
     out += HR(88) + '\n\n';
 
-    // ── BLOCKTIME CHART ── solid cyan bars
-    out += ` ${TL_BG('BLOCKTIME')}  ${WW('Block time in milliseconds  │  Recent samples')}\n\n`;
+    // ── BLOCKTIME ──
+    out += ' ' + TL_BG('BLOCKTIME') + '  ' + WW('Block time in milliseconds  \u2502  Recent samples') + '\n\n';
     out += ' ' + LBL(pad('CURRENT', T)) + LBL(pad('AVERAGE', T)) + LBL(pad('MAX', T)) + LBL('MIN') + '\n';
     out += ' ' + G(pad(bt.current + ' ms', T)) + C(pad(bt.average + ' ms', T)) + Y(pad(bt.maximum + ' ms', T)) + DN(bt.minimum + ' ms') + '\n\n';
-    out += barFillChart(
-      bt.history.map(h => parseFloat(h.value)),
-      bt.history.map(h => h.ago.replace(' mins ago', 'm')),
-      { height: 10, colW: 3, gap: 0, axisW: 8, colTag: '#00FFFF-fg', axisTag: '#00FFFF-fg' }
-    ) + '\n';
-    bt.history.forEach(h => {
-      out += ' ' + WW(pad(h.ago, 14)) + C(h.value + ' ms') + '\n';
-    });
+    if (bt.history && bt.history.length > 0) {
+      out += barFillChart(
+        bt.history.map(function(h) { return parseFloat(h.value); }),
+        bt.history.map(function(h) { return h.ago.replace(' mins ago', 'm'); }),
+        { height: 10, colW: 3, gap: 0, axisW: 8, colTag: '#00FFFF-fg', axisTag: '#00FFFF-fg' }
+      ) + '\n';
+      bt.history.forEach(function(h) {
+        out += ' ' + WW(pad(h.ago, 14)) + C(h.value + ' ms') + '\n';
+      });
+    }
     out += HR(88) + '\n\n';
 
     // ── VALIDATORS ──
-    out += ` ${TL_BG('VALIDATORS')}  ${WW('Top 10 by stake  │  getVoteAccounts')}\n\n`;
+    out += ' ' + TL_BG('VALIDATORS') + '  ' + WW('Top 10 by stake  \u2502  getVoteAccounts') + '\n\n';
     out += ' ' + LBL(pad('#', 5)) + LBL(pad('VOTE KEY', 22)) + LBL(pad('STAKE (SOL)', 18)) + LBL('COMMISSION') + '\n';
     out += HR(60) + '\n';
-    (validators || []).forEach(v => {
+    validators.forEach(function(v) {
       const cc = v.commission === '100%' ? DN(v.commission) : v.commission === '0%' ? G(v.commission) : Y(v.commission);
       out += ' ' + WW(pad(v.rank + '.', 5)) + C(pad(v.name, 22)) + G(pad(v.stake, 18)) + cc + '\n';
     });
     out += HR(88) + '\n\n';
 
     // ── SOL SUPPLY ──
-    out += ` ${TL_BG('SOL SUPPLY')}  ${WW('via getSupply  │  mainnet-beta')}\n\n`;
-    out += ` ${LBL(pad('Circulating:', 22))}${C(pad(sp.circulating + 'M SOL', 16))} ${progressBar(sp.circulatingPct, 28)} ${Y(sp.circulatingPct + '%')}\n`;
-    out += ` ${LBL(pad('Est. Staked:', 22))}${G(pad(sp.staked + 'M SOL', 16))} ${progressBar(sp.stakedPct, 28)} ${Y(sp.stakedPct + '%')}\n`;
-    out += ` ${LBL(pad('Total supply:', 22))}${W(sp.total + 'M SOL')}\n\n`;
-    out += ` ${LBL(pad('Epoch:', 22))}${WW(String(sp.epoch))}    ${LBL('Inflation:')} ${DN(sp.inflationRate + '%')}\n`;
-    out += ` ${LBL(pad('Est. Staking APY:', 22))}${G(sp.stakingApy + '%')}\n`;
+    out += ' ' + TL_BG('SOL SUPPLY') + '  ' + WW('via getSupply  \u2502  mainnet-beta') + '\n\n';
+    out += ' ' + LBL(pad('Circulating:', 22)) + C(pad(sp.circulating + 'M SOL', 16)) + ' ' + progressBar(sp.circulatingPct, 28) + ' ' + Y(sp.circulatingPct + '%') + '\n';
+    out += ' ' + LBL(pad('Est. Staked:', 22)) + G(pad(sp.staked + 'M SOL', 16)) + ' ' + progressBar(sp.stakedPct, 28) + ' ' + Y(sp.stakedPct + '%') + '\n';
+    out += ' ' + LBL(pad('Total supply:', 22)) + W(sp.total + 'M SOL') + '\n\n';
+    out += ' ' + LBL(pad('Epoch:', 22)) + WW(String(sp.epoch)) + '    ' + LBL('Inflation:') + ' ' + DN(sp.inflationRate + '%') + '\n';
+    out += ' ' + LBL(pad('Est. Staking APY:', 22)) + G(sp.stakingApy + '%') + '\n';
     out += HR(88) + '\n\n';
 
     // ── STAKE DATA ──
-    out += ` ${TL_BG('STAKE DATA')}\n\n`;
-    [['Total Est. Staked', sd.totalStaked], ['Est. Staking APY', sd.filterApy], ['Last updated', sd.updated]].forEach(([l, v]) => {
-      out += ` ${LBL(pad(l + ':', 24))}${WW(v)}\n`;
+    out += ' ' + TL_BG('STAKE DATA') + '\n\n';
+    [['Total Est. Staked', sd.totalStaked], ['Est. Staking APY', sd.filterApy], ['Last updated', sd.updated]].forEach(function(pair) {
+      out += ' ' + LBL(pad(pair[0] + ':', 24)) + WW(pair[1]) + '\n';
     });
-    out += `\n ${GRY('Last refreshed: ' + new Date().toLocaleString())}\n`;
-
+    out += '\n ' + GRY('Last refreshed: ' + new Date().toLocaleString()) + '\n';
     netBox.setContent(out);
-    netBox.height = 130;
+    netBox.height = 255;
+  }
+
+  // ── Validator Geo Loader (lazy, triggered on first F7 open) ──
+
+  async function loadValidatorGeoData(isSilent = false) {
+    if (validatorGeoLoading) return;
+    validatorGeoLoading = true;
+    if (!isSilent) { buildNetworkTab(); screen.render(); }
+    try {
+      const { fetchValidatorGeoData } = require('../api');
+      validatorGeoData = await fetchValidatorGeoData();
+      // ALWAYS anchor simulatedSlot to the real chain slot on (re)load
+      simulatedSlot = validatorGeoData.currentSlot;
+    } catch(e) {
+      validatorGeoData = { totalNodes: 0, geoPoints: [], countryList: [], leaders: [] };
+    } finally {
+      validatorGeoLoading = false;
+      buildNetworkTab(); screen.render();
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // HEARTBEAT ENGINE — defined HERE so buildNetworkTab and screen
+  // are in scope via closure. Module-level stub above is a no-op.
+  // ──────────────────────────────────────────────────────────────
+  function startHeartbeat() {
+    if (heartbeatInterval) return; // idempotent
+    heartbeatInterval = setInterval(() => {
+      try {
+        if (current !== 6) return; // only run when on Network tab
+        const geo = validatorGeoData;
+        if (!geo || !geo.leaderSchedule || geo.leaderSchedule.length === 0) return;
+
+        // +1 slot per 400ms tick. Leaders get 4 consecutive slots each,
+        // so the displayed validator name changes every 4 ticks (~1.6 s).
+        simulatedSlot += 1;
+
+        // Re-anchor if we've exhausted the 5000-slot buffer
+        const offset = simulatedSlot - geo.currentSlot;
+        if (offset < 0 || offset >= geo.leaderSchedule.length) {
+          simulatedSlot = geo.currentSlot;
+          return; // skip render this tick
+        }
+
+        buildNetworkTab(true); // fast path: renders ribbon+map only
+        screen.render();
+      } catch (e) {
+        // Swallow errors so interval never dies silently
+      }
+    }, 400);
   }
 
     // ══════════════════════════════════════════════════════════
@@ -1813,7 +2178,7 @@ function startDashboard() {
     const aiStatus = blessed.box({
       parent: tabAI, bottom: 0, left: 0, width: '100%', height: 4,
       tags: true, style: { border: { fg: '#333333' } }, border: 'line',
-      content: ` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {#666666-fg}Powered by Groq Llama 3.3{/}\n ${W('Press "i" to ask the Solana Terminal AI a question...')}`
+      content: ` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {white-fg}Powered by Groq Llama 3.3{/}\n ${W('Press "i" to ask the Solana Terminal AI a question...')}`
     });
 
     let aiHistory = [];
@@ -1842,7 +2207,7 @@ function startDashboard() {
         // Pretty print response
         const formattedResp = response.match(/.{1,95}(\s|$)/g).join('\n ');
         aiLog.setContent(aiLog.getContent() + ` {#9945FF-fg}{bold}AI:{/} \n ${W(formattedResp)}\n\n ${GRY('─────────────────────────────────────────────────────────────────────────────')}\n\n`);
-        aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {#666666-fg}Tokens: ~${Math.round(response.length/4)}{/}\n ${W('Press "i" to ask another question...')}`);
+        aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {white-fg}Tokens: ~${Math.round(response.length/4)}{/}\n ${W('Press "i" to ask another question...')}`);
       } catch (e) {
         aiLog.setContent(aiLog.getContent() + ` {#FF6B6B-fg}{bold}ERROR:{/} ${e.message}\n\n`);
         aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#FF6B6B-fg}ERROR{/}\n ${W('Check your GROQ_API_KEY in .env')}`);
@@ -1949,7 +2314,7 @@ function startDashboard() {
          out += `   ${GRY('No logs available.')}\n\n`;
       } else {
          tx.logs.forEach(l => {
-           let icon = '{#666666-fg}│{/} ', clrLine = l;
+           let icon = '{white-fg}│{/} ', clrLine = l;
            if (l.includes('invoke')) { icon = `{#00FFFF-fg}> {/}`; clrLine = `{#00FFFF-fg}${l}{/}`; }
            else if (l.includes('success')) { icon = `{#00FF88-fg}* {/}`; clrLine = `{#00FF88-fg}${l}{/}`; }
            else if (l.includes('failed') || l.includes('Error')) { icon = `{#FF6B6B-fg}X {/}`; clrLine = `{#FF6B6B-fg}${l}{/}`; }
@@ -1993,7 +2358,7 @@ function startDashboard() {
          
          const visibleBarLen = barStr.replace(/{[^}]+}/g, '').length;
          if (visibleBarLen < BAR_WIDTH) {
-            barStr += `{#222222-bg}${' '.repeat(BAR_WIDTH - visibleBarLen)}{/}`;
+            barStr += `${' '.repeat(BAR_WIDTH - visibleBarLen)}{/}`;
          }
          
          out += barStr + '\n\n' + legendRows.join('\n') + '\n';
@@ -2034,7 +2399,7 @@ function startDashboard() {
       'Terminal news & signals  │  arrows=scroll',
       'Live event stream  │  arrows=scroll',
       'Smart alerts  │  R=refresh',
-      'Solana RPC stats  │  R=refresh  │  30s auto-refresh',
+      'Solana RPC stats  │  Validator World Map  │  R=refresh  │  30s auto-refresh',
       'Ask the Solana Terminal AI assistant  │  I=ask a question',
       'Blockchain deep-dive  │  I=inspect signature  │  R=refresh live feed'
     ];
@@ -2064,6 +2429,12 @@ function startDashboard() {
     if (idx === 4) {
       bootLiveSection();
       renderLiveAll();
+    }
+
+    // Lazy-load validator geo data on first Network tab open (idx 6 = F7)
+    if (idx === 6 && validatorGeoData === null && !validatorGeoLoading) {
+      loadValidatorGeoData();
+      startHeartbeat();
     }
 
     if (idx === 8 && !expTxQuery && (!DATA.explorer.list || DATA.explorer.list.length === 0)) {
@@ -2153,7 +2524,7 @@ function startDashboard() {
   // Seed the sidebar with a few stub entries on startup
   DATA.liveFeed.slice(0, 3).forEach(e => {
     const col = e.type === 'WHALE' ? '#FFD700-fg' : e.type === 'SWAP' ? '#00FFFF-fg' : '#00FF88-fg';
-    feedLog.log(`{#999999-fg}${nowTime()}{/}  {${col}}${e.type.padEnd(5)}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
+    feedLog.log(`{white-fg}${nowTime()}{/}  {${col}}${e.type.padEnd(5)}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
   });
 
   // ─────────────────────────────────────────────
@@ -2189,12 +2560,19 @@ function startDashboard() {
     screen.render();
   }
 
-  async function refreshNetwork() {
-    netLoading = true; netError = null;
-    buildNetworkTab(); screen.render();
+  async function refreshNetwork(isSilent = false) {
+    // If we already have data, refresh silently (no spinner, old data stays)
+    const showSpinner = !netHasData && !isSilent;
+    if (showSpinner) {
+      netLoading = true; netError = null;
+      buildNetworkTab(); screen.render();
+    } else {
+      netLoading = true; netError = null; // flag as loading but don't re-render spinner
+    }
     try {
       await loadNetworkData();
       netLoading = false;
+      netHasData = true; // mark that we have real data now
     } catch (e) {
       netLoading = false;
       netError = e.message.substring(0, 80);
@@ -2210,10 +2588,17 @@ function startDashboard() {
   buildMarketTable(); buildStatsRow(); buildMacroRow(); buildNetworkTab();
   buildWalletTab(); buildTokenTab(); buildAITab();
   
+  // 15-minute silent resync of geo+schedule data (keeps heartbeat in sync with chain)
+  setInterval(() => {
+    if (!validatorGeoLoading) {
+      loadValidatorGeoData(true); // silent = no loading spinner
+    }
+  }, 15 * 60 * 1000); // 15 minutes
+
   setInterval(() => {
     if (current === 3 && !newsLoading && !activeModal) buildNewsTab();
     screen.render();
-  }, 1000);
+  }, 30000);
 
   screen.render();
 

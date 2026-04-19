@@ -1,0 +1,10 @@
+const blessed = require('blessed');
+const contrib = require('blessed-contrib');
+const screen = blessed.screen({ smartCSR: true });
+const map = contrib.map({ style: { shapeColor: 'cyan' }, width: 86, height: 22 });
+screen.append(map);
+map.addMarker({ lat: 40.71, lon: -74.01, color: 'red', char: 'X' });
+screen.render();
+const frame = map.ctx._canvas.frame();
+console.log(frame);
+process.exit(0);
