@@ -10,8 +10,37 @@ const chalk    = require('chalk');
 const readline = require('readline');
 chalk.level = 3;
 
-const { DATA, loadMarketData, loadNetworkData, loadWalletData, loadTokenData } = require('../data');
+const { DATA, loadMarketData, loadNetworkData, loadWalletData, loadTokenData, loadNewsData } = require('../data');
 const CFG = require('../config');
+
+// Internal RPC helper from api.js — used by live section directly
+const { fetchEpochInfo: _fetchEpochInfo } = require('../api');
+// rpcCall helper re-exposed for live section's pollLiveStats
+const https = require('https');
+function rpcCall(method, params = []) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
+    const rpcUrl = new URL(CFG.SOLANA_RPC);
+    const options = {
+      hostname: rpcUrl.hostname,
+      path: rpcUrl.pathname + rpcUrl.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'SolanaTerminal/1.0' },
+      timeout: 10000,
+    };
+    const req = https.request(options, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { const j = JSON.parse(data); if (j.error) reject(new Error(j.error.message)); else resolve(j.result); }
+        catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('RPC timeout')); });
+    req.write(body); req.end();
+  });
+}
 
 // ─────────────────────────────────────────────
 // COLOR PALETTE  (green/cyan theme)
@@ -296,6 +325,53 @@ function loadingBanner(msg) {
   return `\n ${TL_BG('LOADING')}  {#00FFFF-fg}${msg || 'Fetching live data...'}{/}\n\n {white-fg}Connecting to Solana mainnet & DexScreener...{/}\n`;
 }
 
+// ── Animated Loader ───────────────────────────────────────
+// Usage: const stop = createAnimatedLoader(screen, someBox, 'Fetching...');
+// Call stop() when done to clean up.
+function createAnimatedLoader(screen, box, msg, tips) {
+  const SPINNER = ['\u28fe', '\u28f7', '\u28ef', '\u28df', '\u287f', '\u28bf', '\u28fb', '\u28fd'];
+  const BARS    = ['▁','▂','▃','▄','▅','▆','▇','█','▇','▆','▅','▄','▃','▂'];
+  const COLORS  = ['#00FF88', '#00FFCC', '#00CCFF', '#00AAFF', '#0088FF', '#00AAFF', '#00CCFF', '#00FFCC'];
+  const TIPS = tips || [
+    'Connecting to Solana mainnet-beta...',
+    'Querying DexScreener API...',
+    'Syncing live blockchain data...',
+    'Aggregating market intelligence...',
+  ];
+  let frame = 0;
+  let tipIdx = 0;
+
+  function render() {
+    const spin  = SPINNER[frame % SPINNER.length];
+    const clr   = COLORS[frame % COLORS.length];
+    const bar   = BARS.slice(Math.max(0, (frame % BARS.length) - 5), (frame % BARS.length) + 1).join('');
+    const tip   = TIPS[tipIdx % TIPS.length];
+    const barFull = Array.from({length: 40}, (_, i) => BARS[(frame + i) % BARS.length]).join('');
+
+    let out = '';
+    out += '\n';
+    out += `  {${clr}-fg}${barFull}{/}\n`;
+    out += '\n';
+    out += `  {${clr}-fg}{bold}${spin}{/}  {white-fg}{bold}${msg}{/}\n`;
+    out += '\n';
+    out += `  {#888888-fg}${tip}{/}\n`;
+    out += '\n';
+    out += `  {${clr}-fg}${barFull}{/}\n`;
+
+    if (box && !box.destroyed) {
+      box.setContent(out);
+      if (screen && !screen.destroyed) screen.render();
+    }
+    frame++;
+    if (frame % 20 === 0) tipIdx++;
+  }
+
+  render();
+  const iv = setInterval(render, 100);
+  return function stop() { clearInterval(iv); };
+}
+
+
 // ─────────────────────────────────────────────
 // GUI INPUT — pure blessed prompt for easy pasting
 // ─────────────────────────────────────────────
@@ -469,13 +545,48 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   const mainPane = blessed.box({ parent: root, top: 4, left: 0, right: SBW, bottom: 2, style: BOX });
 
-  let activeScroll = null;
-  screen.key(['up', 'k'],   () => { activeScroll?.scroll(-1);  screen.render(); });
-  screen.key(['down', 'j'], () => { activeScroll?.scroll(1);   screen.render(); });
-  screen.key(['pageup'],    () => { activeScroll?.scroll(-10); screen.render(); });
-  screen.key(['pagedown'],  () => { activeScroll?.scroll(10);  screen.render(); });
-  screen.key(['home'],      () => { activeScroll?.setScrollPerc(0);   screen.render(); });
-  screen.key(['end'],       () => { activeScroll?.setScrollPerc(100); screen.render(); });
+  let current = 0;
+  let activeModal = null;
+
+  screen.key(['up', 'k'],   () => {
+    if (activeModal) { activeModal.scroll(-1); screen.render(); return; }
+    if (current === 3 && DATA.news.length > 0) {
+      newsSelected = Math.max(0, newsSelected - 1);
+      buildNewsTab(); screen.render();
+    } else {
+      activeScroll?.scroll(-1); screen.render();
+    }
+  });
+  screen.key(['down', 'j'], () => {
+    if (activeModal) { activeModal.scroll(1); screen.render(); return; }
+    if (current === 3 && DATA.news.length > 0) {
+      newsSelected = Math.min(DATA.news.length - 1, newsSelected + 1);
+      buildNewsTab(); screen.render();
+    } else {
+      activeScroll?.scroll(1); screen.render();
+    }
+  });
+  screen.key(['pageup'],    () => { 
+    if (activeModal) { activeModal.scroll(-10); screen.render(); return; }
+    activeScroll?.scroll(-10); screen.render(); 
+  });
+  screen.key(['pagedown'],  () => { 
+    if (activeModal) { activeModal.scroll(10); screen.render(); return; }
+    activeScroll?.scroll(10);  screen.render(); 
+  });
+  screen.key(['home'],      () => { 
+    if (activeModal) { activeModal.setScrollPerc(0); screen.render(); return; }
+    activeScroll?.setScrollPerc(0);   screen.render(); 
+  });
+  screen.key(['end'],       () => { 
+    if (activeModal) { activeModal.setScrollPerc(100); screen.render(); return; }
+    activeScroll?.setScrollPerc(100); screen.render(); 
+  });
+  screen.key(['enter', 'return'], () => {
+    if (!activeModal && current === 3 && DATA.news.length > 0) {
+      showNewsDetail(DATA.news[newsSelected]);
+    }
+  });
 
   function mkScroll(parent, extra = {}) {
     return blessed.box({
@@ -492,7 +603,7 @@ function startDashboard() {
   // ══════════════════════════════════════════════════════════
   const tabMarket = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
   blessed.text({ parent: tabMarket, top: 0, left: 1, tags: true, style: BOX,
-    content: `{#00FF88-fg}{bold}MARKET OVERVIEW{/}  {white-fg}Live DEX prices  │  ${CFG.MARKET_SYMBOLS.length} assets  │  DexScreener{/}   {#00FF88-fg}● LIVE{/}` });
+    content: `{#00FF88-fg}{bold}MARKET OVERVIEW{/}  {white-fg}Live DEX prices  │  CoinMarketCap Globals{/}   {#00FF88-fg}● LIVE{/}` });
 
   // SOL stat card
   const statsBox = blessed.box({
@@ -514,16 +625,74 @@ function startDashboard() {
     );
   }
 
+  // CoinMarketCap Macro Cards (Market Cap, Altcoin Index, Fear/Greed)
+  const macroBox = blessed.box({ parent: tabMarket, top: 6, left: 0, right: 0, height: 7, tags: true, style: BOX, border: BCYAN });
+  const mcBox = blessed.box({ parent: macroBox, top: 0, left: '0%', width: '25%', height: 5, tags: true, style: BOX });
+  const volBox = blessed.box({ parent: macroBox, top: 0, left: '25%', width: '25%', height: 5, tags: true, style: BOX });
+  const fgBox = blessed.box({ parent: macroBox, top: 0, left: '50%', width: '25%', height: 5, tags: true, style: BOX });
+  const asiBox = blessed.box({ parent: macroBox, top: 0, left: '75%', width: '25%', height: 5, tags: true, style: BOX });
+
+  function buildMacroRow() {
+    const m = DATA.macro;
+    if (!m) { mcBox.setContent(`\n${loadingBanner('Fetching CMC...')}`); return; }
+    
+    // Formatting Helpers
+    const mcapStr = '$' + (m.marketCap / 1e12).toFixed(2) + 'T';
+    const mcapCol = m.marketCapChange >= 0 ? `{#00FF88-fg}▲ ${m.marketCapChange.toFixed(2)}%{/}` : `{#FF6B6B-fg}▼ ${Math.abs(m.marketCapChange).toFixed(2)}%{/}`;
+    
+    const volStr = '$' + (m.globalVolume / 1e9).toFixed(2) + 'B';
+    const volCol = m.globalVolumeChange >= 0 ? `{#00FF88-fg}▲ ${m.globalVolumeChange.toFixed(2)}%{/}` : `{#FF6B6B-fg}▼ ${Math.abs(m.globalVolumeChange).toFixed(2)}%{/}`;
+    
+    const fgClr = m.fearGreedValue >= 70 ? '{#00FF88-fg}' : m.fearGreedValue <= 30 ? '{#FF6B6B-fg}' : '{#FFD700-fg}';
+
+    // Helper for progress bar "loader" style
+    const mkLoader = (val, clr) => {
+      const filled = Math.round(val / 10);
+      return `${clr}${'█'.repeat(filled)}{/}{#333333-fg}${'█'.repeat(10 - filled)}{/}`;
+    };
+
+    // GUI box injections
+    mcBox.setContent(
+      ` ${WW('Market Cap')}  {#557799-fg}Global{/}\n` +
+      ` {bold}${W(mcapStr)}{/} ${mcapCol}\n\n` +
+      ` ${GRY('BTC Dom: ')}{#00FF88-fg}${W((m.btcDominance||0).toFixed(1)+'%')}{/}`
+    );
+
+    volBox.setContent(
+      ` ${WW('24H Volume')}  {#557799-fg}Global{/}\n` +
+      ` {bold}${W(volStr)}{/} ${volCol}\n\n` +
+      ` ${GRY('DeFi Vol: ')}{#00FF88-fg}${W('$'+((m.defiVolume||0)/1e9).toFixed(1)+'B')}{/}`
+    );
+
+    fgBox.setContent(
+      ` ${WW('Fear & Greed')}  {#557799-fg}Index{/}\n` +
+      ` {bold}${W(Math.round(m.fearGreedValue))}{/}${GRY('/100')}  ${fgClr}${m.fearGreedClass}{/}\n` +
+      ` ${mkLoader(m.fearGreedValue, fgClr)}\n\n` 
+    );
+
+    asiBox.setContent(
+      ` ${WW('Altcoin Season')}  {#557799-fg}Index{/}\n` + 
+      ` {bold}${W(m.altcoinIndex)}{/}${GRY('/100')}  ${m.altcoinIndex > 50 ? '{#00FF88-fg}ALT{/}' : '{#FFD700-fg}BTC{/}'}\n` +
+      ` ${mkLoader(m.altcoinIndex, '{#9945FF-fg}')}\n\n` 
+      
+    );
+  }
+
   // Market table
-  const mktScroll = mkScroll(tabMarket, { top: 6, left: 0, right: 0, bottom: 0 });
+  const mktScroll = mkScroll(tabMarket, { top: 13, left: 0, right: 0, bottom: 0 });
   const mktBox    = mkBox(mktScroll, { width: '100%-2' });
 
   const MC = [8, 14, 14, 11, 10, 9];
   function buildMarketTable() {
     if (!DATA.market.length) {
-      mktBox.setContent(loadingBanner('Fetching live prices from DexScreener...'));
+      if (!buildMarketTable._stopLoader) {
+        buildMarketTable._stopLoader = createAnimatedLoader(screen, mktBox,
+          'Fetching live prices from DexScreener...',
+          ['Connecting to DexScreener API...', 'Pulling DEX order book data...', 'Calculating 24h price changes...', 'Syncing Solana token prices...']);
+      }
       mktBox.height = 10; return;
     }
+    if (buildMarketTable._stopLoader) { buildMarketTable._stopLoader(); buildMarketTable._stopLoader = null; }
     const ts  = new Date().toLocaleTimeString('en-US', { hour12: false });
     let out   = '';
     out += TL_BG('PRICE TABLE') + `  ${WW('Live DEX prices')}  ${GRY('updated ' + ts)}\n`;
@@ -607,7 +776,7 @@ function startDashboard() {
 
   function buildWalletTab() {
     let out = '';
-    out += OB(' WALLET INSIGHTS') + `  ${WW('Portfolio analytics | Transaction history')}  ${walletAddr ? GRY('I=change  R=refresh') : C('Press I to enter wallet address')}\n`;
+    out += OB(' WALLET INSIGHTS') + `  ${WW('Portfolio analytics | Transaction history')}  ${walletAddr ? GRY('I=change  R=refresh') : C('Press i to enter wallet address')}\n`;
     out += HR(92) + '\n\n';
 
     if (!walletAddr) {
@@ -618,10 +787,14 @@ function startDashboard() {
       wltBox.setContent(out); wltBox.height = 16; return;
     }
     if (walletLoading) {
-      out += loadingBanner('Fetching wallet from Solana RPC...');
-      out += ` ${LBL('Address: ')}${C(walletAddr)}\n`;
-      wltBox.setContent(out); wltBox.height = 14; return;
+      if (!buildWalletTab._stopLoader) {
+        buildWalletTab._stopLoader = createAnimatedLoader(screen, wltBox,
+          'Fetching wallet from Solana RPC...',
+          ['Querying token accounts...', 'Resolving token mint addresses...', 'Fetching USD values via DexScreener...', 'Building portfolio summary...']);
+      }
+      wltBox.height = 14; return;
     }
+    if (buildWalletTab._stopLoader) { buildWalletTab._stopLoader(); buildWalletTab._stopLoader = null; }
     if (walletError) {
       out += errorBanner(walletError);
       out += ` ${LBL('Address: ')}${C(walletAddr)}\n\n`;
@@ -632,17 +805,13 @@ function startDashboard() {
     const ww = DATA.wallet;
     if (!ww) return;
 
-    out += ` ${LBL('WALLET ADDRESS')}\n`;
-    out += ` ${C(ww.fullAddress)}\n`;
-    out += ` ${GRY('Solana mainnet-beta via public RPC')}\n\n`;
-    out += ` {#00FF88-fg}{bold}$${ww.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{/}  ${WW('Total Portfolio Value (USD)')}\n\n`;
-
-    out += ' ' + LBL(pad('ASSETS', 22))       + LBL('SHORT ADDRESS')   + '\n';
-    out += ' ' + WW(pad(ww.holdings.length + ' tokens', 22)) + WW(ww.address) + '\n';
-    out += HR(92) + '\n';
+    out += ` ${LBL('WALLET:')} ${C(ww.fullAddress)} ${GRY('(Mainnet RPC)')}\n`;
+    out += ` ${LBL('ASSETS:')} ${W(ww.holdings.length + ' tokens')}  ${GRY('│')}  ${LBL('IDENT:')} ${W(ww.address)}\n`;
+    out += ` ${LBL('PORTFOLIO:')} {#00FF88-fg}{bold}$${ww.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{/}\n`;
+    out += HR(92) + '\n\n';
 
     // Holdings
-    out += `\n ${TL_BG('HOLDINGS')}  ${WW(ww.holdings.length + ' assets from Solana RPC')}\n\n`;
+    out += ` ${TL_BG(' HOLDINGS ')}  ${WW(ww.holdings.length + ' assets via Solana RPC')}\n\n`;
     out += ' ' + LBL(pad('TOKEN', 10)) + LBL(pad('AMOUNT', 22)) + LBL(pad('USD VALUE', 18)) + LBL(pad('ALLOC%', 8)) + LBL('WEIGHT') + '\n';
     out += HR(78) + '\n';
     ww.holdings.forEach(h => {
@@ -658,10 +827,63 @@ function startDashboard() {
              Y(pad((h.pct || 0).toFixed(1) + '%', 8)) +
              `{#00FF88-fg}${'█'.repeat(barF)}{/}{#114422-fg}${'░'.repeat(barE)}{/}\n`;
     });
-    out += HR(92) + '\n';
+    out += HR(92) + '\n\n';
+
+    // ── FairScale Reputation & Trust Section ──
+    if (ww.fairScale && !ww.fairScale.error) {
+      const fs = ww.fairScale;
+      const score = Math.round(fs.fairscore || 0);
+      const tier = (fs.tier || 'bronze').toLowerCase();
+      
+      const TIER_CONFIG = {
+        diamond:  { clr: '{#E5E4E2-fg}', bg: '{#333333-bg}', sym: '💎' },
+        platinum: { clr: '{#7FFFD4-fg}', bg: '{#002222-bg}', sym: '💠' },
+        gold:     { clr: '{#FFD700-fg}', bg: '{#222200-bg}', sym: '📀' },
+        silver:   { clr: '{#C0C0C0-fg}', bg: '{#222222-bg}', sym: '💿' },
+        bronze:   { clr: '{#CD7F32-fg}', bg: '{#111111-bg}', sym: '🔘' }
+      };
+      const cfg = TIER_CONFIG[tier] || TIER_CONFIG.bronze;
+      
+      out += ` ${TL_BG(' REPUTATION ')}  ${cfg.bg}${cfg.clr}{bold} ${cfg.sym} ${tier.toUpperCase()}{/}{/}  ${WW('│  FairScale Score:')} ${cfg.clr}{bold}${score}/100{/}  ${WW('│  Humanity:')} ${fs.verified_human ? G('VERIFIED') : Y('PROBABLE')}\n`;
+      
+      // Achievements
+      if (fs.badges && fs.badges.length > 0) {
+        const icons = {
+          'lst_staker': '🔒', 'sol_maxi': '💰', 'no_dumper': '💎', 'diamond_hands': '💎',
+          'net_accumulator': '📈', 'active_trader': '🔥', 'diversified': '🌀',
+          'social_connected': '🔗', 'active_tweeter': '🔔', 'content_creator': '🎨', 'positive_vibes': '😁'
+        };
+
+        out += ` ${LBL('Achievements:')}\n `;
+        let rowLen = 0;
+        fs.badges.slice(0, 8).forEach(b => {
+          const icon = icons[b.id] || '🏅';
+          const bClr = b.tier === 'gold' ? '{#FFD700-fg}' : b.tier === 'silver' ? '{#C0C0C0-fg}' : '{#CD7F32-fg}';
+          const badgeStr = `{#111111-bg}${bClr}${icon} ${b.label}{/}`;
+          
+          // Safer wrap logic based on character count (ignoring tags roughly)
+          if (rowLen + b.label.length > 60) { out += '\n '; rowLen = 0; }
+          out += badgeStr + '  ';
+          rowLen += b.label.length + 6;
+        });
+        out += '\n';
+      }
+
+      // Action Item
+      if (fs.actions && fs.actions.length > 0) {
+        const action = fs.actions[0];
+        const actPrio = action.priority === 'high' ? '{#FF6B6B-fg}' : '{#FFD700-fg}';
+        const label = action.label.substring(0, 30);
+        const desc = action.description.substring(0, 50);
+        out += ` ${actPrio}●{/} ${W('TRUST SIGNAL:')} ${W(label)} — ${GRY(desc)}\n`;
+      }
+      out += ` ${HR(92)}\n\n`;
+    } else if (ww.fairScale?.error) {
+      out += ` ${GRY('FairScale reputation data currently unavailable for this wallet.')}\n\n`;
+    }
 
     // Transactions
-    out += `\n ${TL_BG('RECENT TRANSACTIONS')}  ${WW('Last 5 via Solana RPC')}\n\n`;
+    out += ` ${TL_BG(' RECENT TRANSACTIONS ')}  ${WW('Last 5 via Solana RPC')}\n\n`;
     out += ' ' + LBL(pad('TIME', 12)) + LBL(pad('TYPE', 10)) + LBL(pad('STATUS', 14)) + LBL('SIGNATURE') + '\n';
     out += HR(66) + '\n';
     (ww.recentTxns || []).forEach(tx => {
@@ -669,7 +891,7 @@ function startDashboard() {
       out += ' ' + WW(pad(tx.time, 12)) + C(pad(tx.type, 10)) + st + '  ' + GRY(tx.sig) + '\n';
     });
     if (!ww.recentTxns?.length) out += ` ${WW('No recent transactions found.')}\n`;
-    out += `\n ${GRY('Full history:  solscan.io/account/' + ww.fullAddress)}\n`;
+    out += `\n ${GRY('Full history: solscan.io/account/' + ww.fullAddress)}\n`;
     wltBox.setContent(out);
     wltBox.height = Math.max(32, 24 + (ww.holdings?.length || 0) + (ww.recentTxns?.length || 0) + 8);
   }
@@ -708,14 +930,31 @@ function startDashboard() {
       out += ` ${WW('Enter a token mint address or symbol.')}\n\n`;
       out += ` ${C('Type')} ${W(' i ')} ${C('on your keyboard to search a token')}\n\n`;
       out += ` ${LBL('Symbols:')}  ${G('BONK')}   ${G('WIF')}   ${G('JUP')}   ${G('SOL')}   ${G('RAY')}\n`;
-      out += ` ${LBL('Mint:   ')}  ${GRY('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263')}\n`;
-      tokBox.setContent(out); tokBox.height = 16; return;
+      out += ` ${LBL('Mint:   ')}  ${GRY('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263')}\n\n`;
+      
+      if (DATA.tokenSocials && DATA.tokenSocials.length > 0) {
+        out += `\n ${TL_BG('GLOBAL SOLANA X/TWITTER FEED')}  ${WW('Auto-updating global Solana stream')}\n\n`;
+        DATA.tokenSocials.forEach(s => {
+          const timeStr = s.date.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+          out += `  {#1DA1F2-fg}[${timeStr}] {/} ` + W(s.title.substring(0, 85)) + `\n`;
+          out += `  ${GRY('╰─ Source: ' + s.source)}\n\n`;
+        });
+        out += HR(68) + '\n';
+      }
+
+      tokBox.setContent(out); 
+      tokBox.height = out.split('\n').length + 2; 
+      return;
     }
     if (tokenLoading) {
-      out += loadingBanner('Fetching token data from DexScreener...');
-      out += ` ${LBL('Query: ')}${C(tokenQuery)}\n`;
-      tokBox.setContent(out); tokBox.height = 14; return;
+      if (!buildTokenTab._stopLoader) {
+        buildTokenTab._stopLoader = createAnimatedLoader(screen, tokBox,
+          'Fetching token data from DexScreener...',
+          ['Looking up token metadata...', 'Fetching liquidity pools...', 'Pulling price history data...', 'Calculating risk profile...']);
+      }
+      tokBox.height = 14; return;
     }
+    if (buildTokenTab._stopLoader) { buildTokenTab._stopLoader(); buildTokenTab._stopLoader = null; }
     if (tokenError) {
       out += errorBanner(tokenError);
       out += ` ${LBL('Query: ')}${C(tokenQuery)}\n\n`;
@@ -932,6 +1171,16 @@ function startDashboard() {
       out += HR(68) + '\n';
     }
 
+    if (DATA.tokenSocials && DATA.tokenSocials.length > 0) {
+      out += `\n ${TL_BG('X / TWITTER FEED')}  ${WW('Aggregated via decentralized RSS')}\n\n`;
+      DATA.tokenSocials.forEach(s => {
+        const timeStr = s.date.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+        out += `  {#1DA1F2-fg}[${timeStr}] {/} ` + W(s.title.substring(0, 85)) + `\n`;
+        out += `  ${GRY('╰─ Source: ' + s.source)}\n\n`;
+      });
+      out += HR(68) + '\n';
+    }
+
     out += `\n ${GRY('Details:  dexscreener.com/solana/' + tk.mint)}\n`;
     tokBox.setContent(out);
     tokBox.height = out.split('\n').length + 2;
@@ -959,54 +1208,480 @@ function startDashboard() {
   const newsScroll = mkScroll(tabNews, { top: 0, left: 0, right: 0, bottom: 0 });
   const newsBox    = mkBox(newsScroll, { width: '100%-2' });
 
-  function buildNewsTab() {
-    let out = '';
-    out += OB(' TERMINAL NEWS & SIGNALS') + `  ${WW(DATA.news.length + ' items')}\n`;
-    out += HR(98) + '\n\n';
-    out += ' ' + LBL(pad('TIME', 7)) + LBL(pad('TAG', 10)) + LBL(pad('SOURCE', 14)) + LBL('HEADLINE') + '\n';
-    out += HR(98) + '\n';
-    DATA.news.forEach(n => {
-      const tagBgMap = {
-        WHALE: '{#004488-bg}{white-fg}', SWAP: '{#440077-bg}{white-fg}',
-        DATA:  '{#004466-bg}{white-fg}', SOCIAL: '{#333333-bg}{white-fg}',
-        DEFI:  '{#004422-bg}{white-fg}', NEW: '{#664400-bg}{white-fg}',
-        CEX:   '{#440000-bg}{white-fg}',
-      };
-      const bg   = tagBgMap[n.tag] || '{#222222-bg}{white-fg}';
-      const prio = n.priority === 'high' ? DN('*') : n.priority === 'medium' ? Y('o') : GRY('.');
-      out += ' ' + WW(pad(n.time, 7)) + `${bg} ${pad(n.tag || '', 7)} {/}  ` + C(pad(n.source, 13)) + prio + '  ' + WW(n.text) + '\n';
-      out += HR(98) + '\n';
+  let newsLoading  = false;
+  let newsError    = null;
+
+  // Helpers
+  const relTime = (date) => {
+    const diffMs = Date.now() - (date instanceof Date ? date : new Date(date));
+    const s = Math.floor(diffMs / 1000);
+    if (s < 60)   return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    if (s < 86400) return Math.floor(s / 3600) + 'h';
+    return Math.floor(s / 86400) + 'd';
+  };
+
+  const sourceColor = (src) => {
+    const MAP = {
+      'COINTELEGRAPH': '#00AAFF',
+      'DECRYPT':       '#FF6B35',
+      'CRYPTOBRIEF':   '#AA00FF',
+      'BEINCRYPTO':    '#00CCAA',
+      'SOLANA.COM':    '#9945FF',
+    };
+    return MAP[src] || '#888888';
+  };
+
+  const tagColor = (tag) => {
+    const MAP = {
+      'SOLANA': '#9945FF',
+      'DEFI':   '#00AAAA',
+      'NFT':    '#FF6B6B',
+      'MARKET': '#FFD700',
+      'CRYPTO': '#888888',
+    };
+    return MAP[tag] || '#888888';
+  };
+
+  let newsSelected = 0; // currently highlighted item index
+
+  const { fetchArticleContent } = require('../api');
+
+  // ── Build modal content string ──────────────────────────────
+  function buildModalContent(item, fullText, loading) {
+    const srcClr  = sourceColor(item.source);
+    const tagClr  = tagColor(item.tag);
+    const dateStr = item.date instanceof Date
+      ? item.date.toLocaleString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' })
+      : String(item.date);
+
+    const W_LINE = 80;
+
+    let d = '';
+    d += `\n  {#00FFFF-fg}{bold}${'─'.repeat(W_LINE)}{/}\n`;
+    d += `  {#9945FF-fg}{bold}◈ ARTICLE READER{/}  {#333333-fg}│{/}  {${srcClr}-fg}${item.source}{/}  {${tagClr}-fg}[ ${item.tag} ]{/}      {#FF4444-bg}{white-fg}{bold} [ ESC ] TO CLOSE {/}\n`;
+    d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
+
+    // Title (natively wrapped by blessed)
+    d += `  {white-fg}{bold}${item.title || ''}{/}\n\n`;
+
+    // Meta
+    d += `  {#999999-fg}${dateStr}{/}`;
+    const prioClr = item.priority === 'high' ? '#FF6B6B' : item.priority === 'medium' ? '#FFD700' : '#666666';
+    d += `   {${prioClr}-fg}● ${(item.priority || 'low').toUpperCase()} PRIORITY{/}\n`;
+    d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
+
+    // Full content area
+    if (loading) {
+      d += `  {#FFAA00-fg}⟳ Fetching full article...{/}\n\n`;
+    }
+
+    if (fullText) {
+      d += `  {#00FF88-fg}{bold}FULL ARTICLE TEXT{/}\n`;
+      d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
+      const paras = fullText.split('\n\n');
+      for (const para of paras) {
+        if (para.trim().startsWith('•')) {
+          d += `  {#DDDDDD-fg}{bold}${para.trim()}{/}\n\n`;
+        } else {
+          d += `  {#EEEEEE-fg}${para.trim()}{/}\n\n`;
+        }
+      }
+    } else if (!loading) {
+      // RSS description fallback
+      const body = item.fullDesc || item.fullContent || item.snippet || '';
+      if (body) {
+        d += `  {#AAAAAA-fg}{bold}SUMMARY  {#555555-fg}(full text not available for this source){/}{/}\n`;
+        d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
+        d += `  {#EEEEEE-fg}${body}{/}\n\n`;
+      }
+      d += `  {#333333-fg}${'─'.repeat(W_LINE)}{/}\n`;
+      d += `  {#445544-fg}ℹ  This source uses client-side rendering. Visit the link below to read the full article.{/}\n\n`;
+    }
+
+    d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n`;
+    d += `  {#00FFFF-fg}{bold}LINK:{/}\n`;
+    d += `  {#00FF88-fg}${item.link}{/}\n\n`;
+    d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n`;
+    d += `  {#666666-fg}Press ESC or Q to close this article    ·    Navigate with ↑↓    ·    Copy link above to open in browser{/}\n\n`;
+    return d;
+  }
+
+  // ── News detail modal ─────────────────────────────────────
+  function showNewsDetail(item) {
+    if (!item) return;
+
+    const modal = blessed.box({
+      parent: screen,
+      top: '3%', left: '4%', width: '92%', height: '90%',
+      tags: true, scrollable: true, alwaysScroll: true, mouse: true,
+      keys: true,
+      style: { bg: '#000D0D', fg: 'white', border: { fg: '#00FFFF' } },
+      border: { type: 'line' },
+      scrollbar: { ch: '│', style: { fg: '#9945FF' } },
+      label: ` {#9945FF-fg}{bold} ◈ ARTICLE READER {/} `,
     });
+
+    activeModal = modal;
+
+    // Immediately render with available RSS content
+    const hasFullRss = !!(item.fullContent && item.fullContent.length > 200);
+    modal.setContent(buildModalContent(item, hasFullRss ? item.fullContent : null, !hasFullRss));
+    modal.focus();
+    screen.render();
+
+    // Async-fetch full article if not already available from RSS
+    if (!hasFullRss) {
+      fetchArticleContent(item.link).then(fullText => {
+        if (fullText && fullText.length > 200) {
+          modal.setContent(buildModalContent(item, fullText, false));
+        } else {
+          modal.setContent(buildModalContent(item, null, false));
+        }
+        screen.render();
+      }).catch(() => {
+        modal.setContent(buildModalContent(item, null, false));
+        screen.render();
+      });
+    }
+  }
+
+  function buildNewsTab() {
+    const count  = DATA.news.length;
+    const solCnt = DATA.news.filter(n => n.tag === 'SOLANA').length;
+    if (newsSelected >= count) newsSelected = Math.max(0, count - 1);
+
+    let out = '';
+
+    // Status header
+    const statusDot = newsLoading ? `{#FFAA00-fg}⟳ LOADING{/}` : `{#00FF88-fg}● LIVE{/}`;
+    const lastStr   = DATA.newsLastUpdated
+      ? `{#999999-fg}Updated ${relTime(DATA.newsLastUpdated)} ago{/}`
+      : `{#999999-fg}Loading...{/}`;
+
+    out += OB(' TERMINAL NEWS');
+    out += `  ${statusDot}  {#00FFFF-fg}5 Sources{/}  {#9945FF-fg}${solCnt} Solana{/}  ${lastStr}`;
+    out += `  ${GRY('↑↓=navigate  Enter=open  R=refresh')}\n`;
+    out += HR(98) + '\n';
+
+    if (newsError) out += errorBanner(newsError) + '\n';
+
+    if (newsLoading && count === 0) {
+      if (!buildNewsTab._stopLoader) {
+        buildNewsTab._stopLoader = createAnimatedLoader(screen, newsBox,
+          'Aggregating news from 5 sources...',
+          ['Fetching CoinTelegraph RSS...', 'Fetching Decrypt RSS...', 'Fetching CryptoBrief RSS...', 'Fetching BeInCrypto RSS...', 'Fetching Solana.com news...', 'Sorting by recency...']);
+      }
+      newsBox.height = 14; return;
+    }
+    if (buildNewsTab._stopLoader) { buildNewsTab._stopLoader(); buildNewsTab._stopLoader = null; }
+    if (count === 0) {
+      out += `\n ${TL_BG('NO NEWS')}  ${WW('Press r to load news')}\n\n`;
+      newsBox.setContent(out); newsBox.height = 10; return;
+    }
+
+    // ─────────────────────── SOCIAL SENTIMENT SECTION ───────────────────────
+    if (DATA.tokenSocials && DATA.tokenSocials.length > 0) {
+      out += `\n ${TL_BG('SOCIAL SENTIMENT: X / TWITTER')}  ${WW('Auto-updating global Solana stream')}\n\n`;
+      DATA.tokenSocials.forEach((s, idx) => {
+        const timeStr = s.date.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+        out += `  {#1DA1F2-fg}[${timeStr}] {/} ` + W(s.title.substring(0, 80)) + `\n`;
+        out += `  ${GRY('╰─ ' + s.source)}\n\n`;
+      });
+      out += HR(98) + '\n\n';
+    }
+
+    // Source summary bar
+    const sources = ['COINTELEGRAPH','DECRYPT','CRYPTOBRIEF','BEINCRYPTO','SOLANA.COM'];
+    out += '  ';
+    sources.forEach(s => {
+      const cnt = DATA.news.filter(n => n.source === s).length;
+      if (cnt > 0) {
+        const c = sourceColor(s);
+        out += `{${c}-fg}${s}{/} {#666666-fg}(${cnt}){/}   `;
+      }
+    });
+    out += '\n\n';
+
+    // Column headers
+    const C1=5, C2=14, C4=7;
+    out += '    ' + LBL(pad('AGE', C1)) + LBL(pad('SOURCE', C2)) + LBL(pad('TOPIC', C4)) + '  ' + LBL('HEADLINE') + '\n';
+    out += HR(98) + '\n';
+
+    // News items
+    DATA.news.forEach((n, idx) => {
+      const age     = relTime(n.date);
+      const isSel   = idx === newsSelected;
+      const src     = n.source || 'UNKNOWN';
+      const srcClr  = sourceColor(src);
+      const tag     = n.tag || '';
+      const tagClr  = tagColor(n.tag);
+
+      // Priority marker
+      const prio = n.priority === 'high'   ? `{#FF6B6B-fg}★{/}`
+                 : n.priority === 'medium' ? `{#FFD700-fg}◆{/}`
+                 :                           `{#444444-fg}·{/}`;
+
+      // Headline
+      const headline = (n.title || '').substring(0, 68);
+      const indent = ' '.repeat(4 + C1 + C2 + C4 + 2);
+
+      if (isSel) {
+        // Selected row: highlighted background, bright green headline
+        out += `{#001A2A-bg} →  ${GRY(pad(age, C1))}{${srcClr}-fg}${pad(src, C2)}{/}{${tagClr}-fg}${pad(tag, C4)}{/}  {#00FF88-fg}{bold}${headline}{/}{/}\n`;
+        if (n.snippet) {
+          out += `{#001A2A-bg}${indent}{#AAAAAA-fg}${n.snippet.substring(0, 64)}{/}{/}\n`;
+        }
+        out += `  {#00FFFF-fg}${'─'.repeat(96)}{/}\n`;
+      } else {
+        out += `  ${prio} ${GRY(pad(age, C1))}{${srcClr}-fg}${pad(src, C2)}{/}{${tagClr}-fg}${pad(tag, C4)}{/}  ${W(headline)}\n`;
+        if (n.snippet) {
+          out += `${indent}${GRY(n.snippet.substring(0, 64))}\n`;
+        }
+        out += `  {#112222-fg}${'─'.repeat(96)}{/}\n`;
+      }
+    });
+
     newsBox.setContent(out);
-    newsBox.height = DATA.news.length * 2 + 8;
+    newsBox.height = (DATA.news.length * 3) + 14 + (DATA.tokenSocials && DATA.tokenSocials.length ? 15 : 0);
+    
+    // Auto-scroll logic: ensures smooth scroll without clipping top items
+    if (newsSelected <= 2) {
+      newsScroll.setScrollPerc(0);
+    } else {
+      newsScroll.setScrollPerc((newsSelected / count) * 100);
+    }
   }
 
   // ══════════════════════════════════════════════════════════
-  // F6  LIVE
+  // F6  LIVE — Real-time on-chain trading terminal
   // ══════════════════════════════════════════════════════════
-  const tabLive = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  blessed.text({ parent: tabLive, top: 0, left: 1, tags: true, style: BOX,
-    content: `{#00FF88-fg}LIVE MODE{/}  {white-fg}Streaming on-chain events  │  mainnet-beta{/}` });
+  const { fetchDexMovers, fetchTopSolanaTokens, fetchTrendingTokens, startLiveStream, fetchBitqueryWhales } = require('../api');
 
-  const liveHero = blessed.box({ parent: tabLive, top: 1, left: 0, right: 0, height: 4, tags: true, style: BOX, border: BCYAN });
-  function updateLiveHero() {
+  const tabLive = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+
+  // ── Header bar ──────────────────────────────────────────
+  const liveHeader = blessed.box({
+    parent: tabLive, top: 0, left: 0, right: 0, height: 1,
+    tags: true, style: { bg: '#001A0D', fg: 'white' },
+  });
+
+  // ── Stats bar (SOL / Slot / TPS / WSS status) ───────────
+  const liveStats = blessed.box({
+    parent: tabLive, top: 1, left: 0, right: 0, height: 3,
+    tags: true, border: { type: 'line' },
+    style: { bg: '#001A0D', fg: 'white', border: { fg: '#00FFFF' } },
+  });
+
+  // ── Swap Stream ─────────────────────────────────────────
+  const liveStreamBox = blessed.box({
+    parent: tabLive, top: 4, left: 0, right: 0, bottom: 0,
+    tags: true, border: { type: 'line' },
+    label: ' {#FFD700-fg}{bold}⚡ LIVE ON-CHAIN STREAM{/}  {#999999-fg}Raydium · Orca · Jupiter · Pump.fun{/} ',
+    style: { bg: '#000D0D', fg: 'white', border: { fg: '#FFD700' } },
+    scrollable: true, alwaysScroll: true, mouse: true,
+    scrollbar: { ch: '│', style: { fg: '#FFD700' } },
+  });
+
+
+  // ── Live state ──────────────────────────────────────────
+  let liveWssStatus   = 'CONNECTING';
+  let liveWssCount    = 0;  // events received
+  let liveSlot        = 0;
+  let liveTps         = 0;
+  let liveTrending    = [];
+  let liveDexMovers   = [];
+  let liveTopTokens   = [];
+  let liveStreamLines = []; // rolling buffer of events
+  let stopLiveWss     = null;
+
+  const MAX_STREAM_LINES = 200;
+
+  // Event type styles
+  const EV_STYLE = {
+    SWAP:   { clr: '#00FFFF', badge: '⇄ SWAP  ' },
+    BUY:    { clr: '#00FF88', badge: '▲ BUY   ' },
+    SELL:   { clr: '#FF6B6B', badge: '▼ SELL  ' },
+    WHALE:  { clr: '#FFD700', badge: '🐋 WHALE' },
+    STAKE:  { clr: '#CC99FF', badge: '⚑ STAKE ' },
+    NFT:    { clr: '#FF99BB', badge: '◈ NFT   ' },
+    TX:     { clr: '#AAAAAA', badge: '· TX    ' },
+    SYS:    { clr: '#999999', badge: '• SYS   ' },
+  };
+
+  function fmtEventTime(d) {
+    return d.toLocaleTimeString('en-US', { hour12: false });
+  }
+
+  function renderLiveHeader() {
     const sol = DATA.market.find(m => m.symbol === 'SOL');
-    liveHero.setContent(
-      `\n {#00FFFF-fg}${pad('ASSET', 28)}PRICE              STATUS{/}\n` +
-      ` {#FFD700-fg}{bold}${pad('SOL / USD', 28)}{/}` +
-      `{#00FF88-fg}{bold}${pad(sol ? fmtPrice(sol.price) : '...', 20)}{/}` +
-      `{#00FF88-fg}CONNECTED  mainnet-beta{/}`
+    const price = sol ? `{#00FF88-fg}{bold}$${sol.price.toFixed(2)}{/}` : `{#AAAAAA-fg}...{/}`;
+    const pct   = sol ? (sol.pct >= 0 ? `{#00FF88-fg}+${sol.pct.toFixed(2)}%{/}` : `{#FF6B6B-fg}${sol.pct.toFixed(2)}%{/}`) : '';
+    const wssDot = liveWssStatus === 'CONNECTED'    ? `{#00FF88-fg}● LIVE WSS{/}` :
+                   liveWssStatus === 'ERROR'         ? `{#FF6B6B-fg}● ERROR{/}` :
+                   liveWssStatus === 'RECONNECTING'  ? `{#FF6B6B-fg}⟳ RECONNECTING{/}` :
+                   `{#FFAA00-fg}⟳ CONNECTING{/}`;
+    const evCnt = liveWssCount ? `{#888888-fg}  ${liveWssCount} events{/}` : '';
+    liveHeader.setContent(
+      ` {#9945FF-fg}{bold}◈ LIVE TRADING TERMINAL{/}   SOL: ${price} ${pct}   ${wssDot}${evCnt}  ` +
+      `{#AAAAAA-fg}Slot: ${liveSlot ? liveSlot.toLocaleString() : '...'}  TPS: ${liveTps || '...'}  mainnet-beta{/}`
     );
   }
-  updateLiveHero();
 
-  const liveFull = contrib.log({
-    parent: tabLive, top: 5, left: 0, right: 0, bottom: 0,
-    fg: 'white', tags: true, style: BOX, border: BCYAN,
-    label: ' {#FFD700-fg}LIVE TX STREAM{/} ',
-    scrollable: true, mouse: true,
-    scrollbar: { ch: '│', style: { fg: '#00FFFF' } },
-  });
+  function renderLiveStats() {
+    const sol = DATA.market.find(m => m.symbol === 'SOL');
+    const btc = DATA.market.find(m => m.symbol === 'BTC');
+    const eth = DATA.market.find(m => m.symbol === 'ETH');
+
+    function priceLine(asset) {
+      if (!asset) return `{#AAAAAA-fg}...{/}`;
+      const clr = asset.pct >= 0 ? '#00FF88' : '#FF6B6B';
+      const pctStr = (asset.pct >= 0 ? '+' : '') + asset.pct.toFixed(2) + '%';
+      const priceStr = asset.price >= 1000
+        ? asset.price.toLocaleString('en-US', {maximumFractionDigits:0})
+        : asset.price.toFixed(asset.price >= 1 ? 2 : 4);
+      return `{white-fg}{bold}${asset.symbol.padEnd(5)}{/} {${clr}-fg}{bold}$${priceStr}{/}  {${clr}-fg}${pctStr.padEnd(9)}{/}{#AAAAAA-fg}Vol: ${asset.vol}{/}`;
+    }
+
+    const tpsClr  = liveTps > 3000 ? '#00FF88' : liveTps > 1000 ? '#FFD700' : '#FF6B6B';
+    const slotStr = liveSlot ? `{#00FFFF-fg}${liveSlot.toLocaleString()}{/}` : `{#888888-fg}fetching...{/}`;
+
+    let out = '';
+    out += ` ${priceLine(sol)}    ${priceLine(btc)}    ${priceLine(eth)}  \n`;
+    out += ` {#999999-fg}Slot:{/} ${slotStr}  ` +
+           `{#999999-fg}TPS:{/} {${tpsClr}-fg}${liveTps || '...'}{/}  ` +
+           `{#999999-fg}Events Captured:{/} {#00FFFF-fg}${liveWssCount}{/}`;
+    liveStats.setContent(out);
+  }
+
+  function renderSwapStream() {
+    if (liveStreamLines.length === 0) {
+      liveStreamBox.setContent('\n  {#AAAAAA-fg}Connecting to on-chain stream...{/}');
+      return;
+    }
+    // Render the entire buffer so user can scroll back
+    const out = liveStreamLines.map(ev => {
+      const style  = EV_STYLE[ev.type] || EV_STYLE.TX;
+      const timeStr = fmtEventTime(ev.time);
+      const srcClr  = ev.source === 'Raydium'  ? '#FF8844' :
+                      ev.source === 'Orca'      ? '#00CCFF' :
+                      ev.source === 'Jupiter'   ? '#00FF88' :
+                      ev.source === 'Pump.fun'  ? '#FF66CC' : '#AAAAAA';
+      const badge   = `{${style.clr}-fg}{bold}${style.badge}{/}`;
+      const srcTag  = ev.source !== 'SYSTEM'
+        ? `{${srcClr}-fg}${ev.source.padEnd(9)}{/}`
+        : `{#999999-fg}SYSTEM   {/}`;
+      
+      const bracketIdx = ev.text.indexOf('[');
+      const mainText = bracketIdx > -1 ? ev.text.slice(0, bracketIdx) : ev.text;
+      const addrText = bracketIdx > -1 ? ev.text.slice(bracketIdx) : '';
+      return `  {#AAAAAA-fg}${timeStr}{/}  ${badge}${srcTag}  {white-fg}${mainText}{/}{#00FFFF-fg}${addrText}{/}`;
+    }).join('\n');
+
+    // Remember scroll state
+    const isAtBottom = liveStreamBox.getScrollPerc() >= 98 || liveStreamBox.getScrollPerc() === 0;
+    const prevScroll = liveStreamBox.getScroll();
+
+    liveStreamBox.setContent(out);
+
+    if (isAtBottom) {
+      liveStreamBox.setScrollPerc(100);
+    } else {
+      liveStreamBox.setScroll(prevScroll);
+    }
+  }
+
+  function renderLiveAll() {
+    renderLiveHeader();
+    renderLiveStats();
+    renderSwapStream();
+    screen.render();
+  }
+
+  // ── Push event to stream ────────────────────────────────
+  function pushLiveEvent(ev) {
+    liveStreamLines.push(ev);
+    if (liveStreamLines.length > MAX_STREAM_LINES) liveStreamLines.shift();
+    if (ev.type !== 'SYS') liveWssCount++;
+
+    // Update sidebar live feed too
+    const style = EV_STYLE[ev.type] || EV_STYLE.TX;
+    const srcClr = ev.source === 'Raydium' ? '#FF6B35' : ev.source === 'Orca' ? '#00CCFF' : '#00FFFF';
+    feedLog.log(`{#999999-fg}${fmtEventTime(ev.time)}{/}  {${style.clr}-fg}${style.badge.trim()}{/}  {white-fg}${ev.text.substring(0, 24)}{/}`);
+
+    if (current === 4) renderLiveAll(); // only render if tab is visible
+  }
+
+  // ── Slot + TPS poller (every 10s) ───────────────────────
+  let liveSlotInterval = null;
+
+  async function pollLiveStats() {
+    try {
+      const [epochInfo, perfSamples] = await Promise.allSettled([
+        require('../api').fetchEpochInfo().catch(() => null),
+        rpcCall('getRecentPerformanceSamples', [3]).catch(() => null),
+      ]);
+      if (epochInfo.status === 'fulfilled' && epochInfo.value) {
+        liveSlot = epochInfo.value.absoluteSlot || 0;
+      }
+      if (perfSamples.status === 'fulfilled' && Array.isArray(perfSamples.value) && perfSamples.value.length) {
+        const s = perfSamples.value[0];
+        liveTps = s.samplePeriodSecs > 0 ? Math.round(s.numTransactions / s.samplePeriodSecs) : 0;
+      }
+    } catch (e) {}
+    if (current === 4) renderLiveAll();
+  }
+
+  // ── High volume whale alerts poller ────────────────
+  let liveTrendInterval = null;
+
+  async function pollLiveBottom() {
+    const whales = await fetchBitqueryWhales().catch(() => []);
+    if (whales && whales.length) {
+      whales.forEach(ev => pushLiveEvent(ev));
+    }
+    if (current === 4) renderLiveAll();
+  }
+
+  // ── Boot the live engine (called once when Live tab first activated) ──
+  let liveBooted = false;
+
+  function bootLiveSection() {
+    if (liveBooted) return;
+    liveBooted = true;
+
+    // Start WebSocket stream
+    liveWssStatus = 'CONNECTING';
+    stopLiveWss = startLiveStream(ev => {
+      if (ev.type === 'SYS') {
+        if (ev.text.includes('connected')) liveWssStatus = 'CONNECTED';
+        else if (ev.text.includes('error') || ev.text.includes('Error')) liveWssStatus = 'ERROR';
+        else if (ev.text.includes('reconnecting')) liveWssStatus = 'RECONNECTING';
+      }
+      pushLiveEvent(ev);
+    });
+
+    // Initial data fetch
+    pollLiveStats();
+    pollLiveBottom();
+
+    // Set up polling intervals
+    liveSlotInterval   = setInterval(pollLiveStats,   10000);
+    liveTrendInterval  = setInterval(pollLiveBottom,  12000);
+
+    // Inject initial simulated events while stream loads
+    const INIT_MESSAGES = [
+      '⚡ Initializing on-chain event stream...',
+      'Subscribing to Raydium AMM program...',
+      'Subscribing to Orca Whirlpool program...',
+      'Subscribing to Jupiter Aggregator v6...',
+    ];
+    INIT_MESSAGES.forEach((msg, i) => {
+      setTimeout(() => pushLiveEvent({ type: 'SYS', source: 'SYSTEM', text: msg, time: new Date() }), i * 300);
+    });
+  }
+
+
 
   // ══════════════════════════════════════════════════════════
   // F7  ALERTS
@@ -1045,7 +1720,15 @@ function startDashboard() {
     let out = '';
     out += OB(' NETWORK STATS') + `  ${WW('Solana blockchain  │  Real-time RPC data')}\n`;
     out += HR(88) + '\n\n';
-    if (netLoading) { out += loadingBanner('Fetching epoch, TPS, validators...'); netBox.setContent(out); netBox.height = 12; return; }
+    if (netLoading) {
+      if (!buildNetworkTab._stopLoader) {
+        buildNetworkTab._stopLoader = createAnimatedLoader(screen, netBox,
+          'Fetching epoch, TPS & validators...',
+          ['Querying Solana RPC for epoch info...', 'Sampling recent TPS data...', 'Fetching block time samples...', 'Loading validator gossip data...', 'Compiling supply metrics...']);
+      }
+      netBox.height = 12; return;
+    }
+    if (buildNetworkTab._stopLoader) { buildNetworkTab._stopLoader(); buildNetworkTab._stopLoader = null; }
     if (netError)   { out += errorBanner(netError); netBox.setContent(out); netBox.height = 12; return; }
 
     const { epoch: ep, tps, blocktime: bt, supply: sp, stakeData: sd, validators } = DATA.networkStats;
@@ -1121,20 +1804,224 @@ function startDashboard() {
   }
 
     // ══════════════════════════════════════════════════════════
-    // F8  ASK AI (Coming Soon)
+    // F8  ASK AI TERMINAL ASSISTANT
     // ══════════════════════════════════════════════════════════
-    const tabAi  = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-    const aiBox  = mkBox(tabAi, { width: '100%-2', height: '100%' });
-  
-    function buildAiTab() {
+    const tabAI = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+    const aiLog = mkScroll(tabAI, { top: 0, left: 0, right: 0, bottom: 4 });
+    
+    // Status Bar for AI
+    const aiStatus = blessed.box({
+      parent: tabAI, bottom: 0, left: 0, width: '100%', height: 4,
+      tags: true, style: { border: { fg: '#333333' } }, border: 'line',
+      content: ` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {#666666-fg}Powered by Groq Llama 3.3{/}\n ${W('Press "i" to ask the Solana Terminal AI a question...')}`
+    });
+
+    let aiHistory = [];
+
+    function buildAITab() {
+      if (aiLog.getContent() === '') {
+        aiLog.setContent(`\n ${TL_BG(' SOLANA TERMINAL AI ')}  ${WW('Welcome to the high-frequency trading assistant.')}\n\n ${GRY('Ask about Solana market caps, network stats, or technical analysis.')}\n\n ${GRY('─────────────────────────────────────────────────────────────────────────────')}\n\n`);
+      }
+    }
+
+    async function handleAIQuery(query) {
+      if (!query) return;
+      
+      aiLog.setContent(aiLog.getContent() + ` {#00FFFF-fg}{bold}USER: ${query}{/}\n\n`);
+      aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#FFD700-fg}THINKING...{/}\n ${GRY('Crunching market data via Groq Llama-3.3...')}`);
+      screen.render();
+
+      try {
+        const { fetchAIResponse } = require('../api');
+        const response = await fetchAIResponse(query, aiHistory.slice(-6));
+        
+        // Add to history for context
+        aiHistory.push({ role: 'user', content: query });
+        aiHistory.push({ role: 'assistant', content: response });
+
+        // Pretty print response
+        const formattedResp = response.match(/.{1,95}(\s|$)/g).join('\n ');
+        aiLog.setContent(aiLog.getContent() + ` {#9945FF-fg}{bold}AI:{/} \n ${W(formattedResp)}\n\n ${GRY('─────────────────────────────────────────────────────────────────────────────')}\n\n`);
+        aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {#666666-fg}Tokens: ~${Math.round(response.length/4)}{/}\n ${W('Press "i" to ask another question...')}`);
+      } catch (e) {
+        aiLog.setContent(aiLog.getContent() + ` {#FF6B6B-fg}{bold}ERROR:{/} ${e.message}\n\n`);
+        aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#FF6B6B-fg}ERROR{/}\n ${W('Check your GROQ_API_KEY in .env')}`);
+      }
+      
+      aiLog.setScrollPerc(100);
+      screen.render();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // F9  BLOCKCHAIN EXPLORER (TX INSPECTOR)
+    // ══════════════════════════════════════════════════════════
+    const tabExplorer = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+    const expScroll = mkScroll(tabExplorer, { top: 0, left: 0, right: 0, bottom: 0 });
+    const expBox    = mkBox(expScroll, { width: '100%-2' });
+
+    let expTxQuery = null;
+
+    function buildExplorerTab() {
       let out = '';
-      out += OB(' ASK AI ') + `  ${WW('Solana Terminal Intelligence')}\n`;
-      out += HR(92) + '\n\n';
-      out += ` ${TL_BG('COMING SOON')}\n\n`;
-      out += ` ${WW('An integrated AI assistant that can answer your questions about the Solana ecosystem.')}\n`;
-      out += ` ${WW('Ask about tokens, protocols, smart contracts, and network traffic.')}\n\n`;
-      out += ` ${C('Type')} ${W(' i ')} ${C('to chat with the AI (Feature arriving in v2.0)')}\n`;
-      aiBox.setContent(out);
+      out += Object.keys(DATA.explorer.details || {}).length > 0 ? OB(' TRANSACTION INSPECTOR') : OB(' BLOCKCHAIN EXPLORER');
+      out += `  ${WW('Deep Parse | Instructions | Profiling')}  ${expTxQuery ? GRY('I=search  R=refresh') : C('Press i to enter signature')}\n`;
+      out += HR(88) + '\n\n';
+
+      if (DATA.explorer.error) {
+        out += errorBanner(DATA.explorer.error) + `\n ${WW('Press')} ${C('I')} ${WW('to search another transaction.')}\n`;
+        expBox.setContent(out); return;
+      }
+
+      if (DATA.explorer.loading) {
+        expBox.setContent(out + `\n\n ${TL_BG(' FETCHING TRANSACTION ')}\n\n ${Y('Analyzing blocks via high-capacity public RPC...')}\n`);
+        return;
+      }
+
+      if (!expTxQuery && (!DATA.explorer.list || DATA.explorer.list.length === 0)) {
+        out += `\n ${TL_BG(' NETWORK ACTIVITY STREAM ')}\n\n ${WW('Fetching recent global transactions...')}\n`;
+        expBox.setContent(out); return;
+      }
+
+      if (!expTxQuery) {
+        out += ` ${LBL('LATEST TRANSACTIONS')}  ${GRY('(System Program Activity)')}\n`;
+        out += ' ' + LBL(pad('TIME', 12)) + LBL(pad('STATUS', 10)) + LBL(pad('SLOT', 12)) + LBL('SIGNATURE') + '\n';
+        out += HR(88) + '\n';
+        DATA.explorer.list.forEach(tx => {
+           const st = tx.status === 'SUCCESS' ? GRN_BG(' SUCCESS ') : RED_BG(' FAILE D ');
+           out += ' ' + W(pad(tx.time, 12)) + st + ' ' + pad(String(tx.slot), 12) + C(tx.signature) + '\n';
+        });
+        out += `\n ${C('Type')} ${W(' i ')} ${C('to inspect a specific transaction deep-dive.')}\n`;
+        expBox.setContent(out);
+        expBox.height = 25;
+        return;
+      }
+
+      const tx = DATA.explorer.details;
+      if (!tx) return;
+
+      // Overview Section
+      out += ` ${TL_BG(' OVERVIEW ')}\n\n`;
+      const statusBtn = tx.success ? GRN_BG(' Success ') : RED_BG(' Failed ');
+      out += `  ${LBL(pad('Signature', 15))} ${C(tx.signature)}\n`;
+      out += `  ${LBL(pad('Result', 15))} ${statusBtn}\n`;
+      out += `  ${LBL(pad('Timestamp', 15))} ${W(tx.timestamp)}\n`;
+      out += `  ${LBL(pad('Status', 15))} ${W('FINALIZED')}\n`;
+      out += `  ${LBL(pad('Slot', 15))} ${W(tx.slot)}\n`;
+      out += `  ${LBL(pad('Fee (SOL)', 15))} ${W('◎' + tx.fee)}\n`;
+      out += `  ${LBL(pad('Compute Units', 15))} ${W(tx.cuConsumed)}\n`;
+      out += `  ${LBL(pad('Version', 15))} ${W(tx.version)}\n\n`;
+
+      // Account Inputs
+      out += ` ${TL_BG(` ACCOUNT INPUT(S) (${(tx.accounts||[]).length}) `)}\n\n`;
+      out += '   ' + LBL(pad('#', 3)) + LBL(pad('ADDRESS', 44)) + LBL(pad('CHANGE (SOL)', 12)) + LBL(pad('DETAILS', 20)) + '\n';
+      out += ' ' + HR(80) + '\n';
+      (tx.accounts || []).forEach((acc, i) => {
+        let chg = String(acc.change);
+        let chgClr = chg === '0' ? GRY(pad('0', 11)) : chg.startsWith('-') ? `{#FF6B6B-fg}${pad(chg, 11)}{/}` : `{#00FF88-fg}${pad('+'+chg, 11)}{/}`;
+        let badges = '';
+        if (acc.feePayer) badges += '{#0066CC-bg}{#FFFFFF-fg} Payer {/} ';
+        if (acc.signer) badges += '{#336699-bg}{#FFFFFF-fg} Signer {/} ';
+        if (acc.writable) badges += '{#800080-bg}{#FFFFFF-fg} Writable {/} ';
+        if (acc.program) badges += '{#0055AA-bg}{#FFFFFF-fg} Program {/} ';
+        
+        out += '   ' + W(pad(String(i+1), 3)) + C(pad(acc.pubkey, 44)) + chgClr + ' ' + badges + '\n';
+      });
+      out += '\n';
+
+      // Instructions
+      out += ` ${TL_BG(' INSTRUCTIONS ')}\n\n`;
+      (tx.instructions || []).forEach((ix) => {
+        out += `   {#114422-bg}{#00FF88-fg} #${ix.index} {/} {bold}${ix.name}{/}\n`;
+        out += `   ${pad(W('Program'), 25)}${C(ix.programId)}\n`;
+        if (ix.parsedParams && ix.parsedParams.length > 0) {
+           ix.parsedParams.forEach(p => {
+              out += `   ${pad(GRY(p.key), 25)}${C(p.value)}\n`;
+           });
+        } else if (ix.data) {
+           out += `   ${pad(GRY('Data'), 25)}${GRY(ix.data)}\n`;
+        }
+        out += '\n';
+      });
+
+      // Trace (Logs)
+      out += ` ${TL_BG(' PROGRAM EXECUTION TRACE ')}\n\n`;
+      if (!tx.logs || tx.logs.length === 0) {
+         out += `   ${GRY('No logs available.')}\n\n`;
+      } else {
+         tx.logs.forEach(l => {
+           let icon = '{#666666-fg}│{/} ', clrLine = l;
+           if (l.includes('invoke')) { icon = `{#00FFFF-fg}> {/}`; clrLine = `{#00FFFF-fg}${l}{/}`; }
+           else if (l.includes('success')) { icon = `{#00FF88-fg}* {/}`; clrLine = `{#00FF88-fg}${l}{/}`; }
+           else if (l.includes('failed') || l.includes('Error')) { icon = `{#FF6B6B-fg}X {/}`; clrLine = `{#FF6B6B-fg}${l}{/}`; }
+           else if (l.includes('consumed')) { icon = `{#FFD700-fg}! {/}`; clrLine = `{#FFD700-fg}${l}{/}`; }
+           else if (l.includes('log:')) { icon = `{#AAAAAA-fg}i {/}`; clrLine = `{#AAAAAA-fg}${l}{/}`; }
+           else if (l.includes('return')) { icon = `{#9945FF-fg}# {/}`; clrLine = `{#9945FF-fg}${l}{/}`; }
+           
+           out += `   ${icon} ${clrLine}\n`;
+         });
+         out += '\n';
+      }
+
+      // CU Profiling (Stacked Multi-Color Bar)
+      out += `\n\n ${TL_BG(' COMPUTE UNIT PROFILING ')}\n\n`;
+      out += `   ${LBL('Total Consumption:')} ${W(tx.cuConsumed.toLocaleString() + ' CU')}\n\n`;
+      
+      const BAR_WIDTH = 85;
+      const MAX_CU = 1400000;
+      const colors = ['#00FF88', '#00CCBB', '#0099FF', '#9945FF', '#FFD700', '#FF6B6B', '#FF00FF', '#00FFFF'];
+      
+      if (tx.cuUsage && tx.cuUsage.length > 0) {
+         let barStr = '   ';
+         let legendRows = [];
+         let currentRow = '   ';
+
+         tx.cuUsage.forEach((usage, idx) => {
+            const clr = colors[idx % colors.length];
+            const segW = Math.max(1, Math.round((usage.consumed / MAX_CU) * BAR_WIDTH));
+            barStr += `{${clr}-bg} ${'{/}'}`.repeat(segW);
+            
+            const item = `{${clr}-fg}■{/} ${W('#' + (idx+1))} ${GRY(usage.consumed.toLocaleString())}`;
+            
+            if (currentRow.replace(/{[^}]+}/g, '').length + item.replace(/{[^}]+}/g, '').length > 82) {
+               legendRows.push(currentRow);
+               currentRow = '   ' + item + '    ';
+            } else {
+               currentRow += item + '    ';
+            }
+         });
+         legendRows.push(currentRow);
+         
+         const visibleBarLen = barStr.replace(/{[^}]+}/g, '').length;
+         if (visibleBarLen < BAR_WIDTH) {
+            barStr += `{#222222-bg}${' '.repeat(BAR_WIDTH - visibleBarLen)}{/}`;
+         }
+         
+         out += barStr + '\n\n' + legendRows.join('\n') + '\n';
+      } else {
+         const fullBar = Math.min(BAR_WIDTH, Math.round((tx.cuConsumed / MAX_CU) * BAR_WIDTH) || 5);
+         out += `   {#00FF88-bg}${' '.repeat(fullBar)}{/}\n`;
+      }
+
+      expBox.setContent(out);
+      expBox.height = 60 + (tx.accounts||[]).length + (tx.instructions||[]).length * 6 + (tx.logs||[]).length + 15;
+    }
+
+    async function loadExplorerDetails(sig) {
+      expTxQuery = sig;
+      DATA.explorer.loading = true;
+      buildExplorerTab(); screen.render();
+      const { loadExplorerDetails } = require('../data');
+      await loadExplorerDetails(sig);
+      buildExplorerTab(); screen.render();
+    }
+
+    async function refreshExplorerList() {
+      expTxQuery = null;
+      DATA.explorer.loading = true;
+      buildExplorerTab(); screen.render();
+      const { loadExplorerList } = require('../data');
+      await loadExplorerList();
+      buildExplorerTab(); screen.render();
     }
   
     // ─────────────────────────────────────────────
@@ -1148,7 +2035,8 @@ function startDashboard() {
       'Live event stream  │  arrows=scroll',
       'Smart alerts  │  R=refresh',
       'Solana RPC stats  │  R=refresh  │  30s auto-refresh',
-      'Ask Solana AI Assistant',
+      'Ask the Solana Terminal AI assistant  │  I=ask a question',
+      'Blockchain deep-dive  │  I=inspect signature  │  R=refresh live feed'
     ];
   const cmdBar = blessed.box({
     parent: root, bottom: 1, left: 0, width: '100%', height: 1,
@@ -1163,8 +2051,8 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   // TAB MANAGEMENT
   // ─────────────────────────────────────────────
-  const allTabs    = [tabMarket, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork, tabAi];
-  const allScrolls = [mktScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll, null];
+  const allTabs    = [tabMarket, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork, tabAI, tabExplorer];
+  const allScrolls = [mktScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll, aiLog, expScroll];
 
   function activateTab(idx) {
     current = idx;
@@ -1172,7 +2060,17 @@ function startDashboard() {
     activeScroll = allScrolls[idx] || null;
     if (activeScroll) activeScroll.setScrollPerc(0);
 
-    const names = ['MARKET','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK', 'ASK AI'];
+    // Boot live section on first activation (LIVE = idx 4 = F5)
+    if (idx === 4) {
+      bootLiveSection();
+      renderLiveAll();
+    }
+
+    if (idx === 8 && !expTxQuery && (!DATA.explorer.list || DATA.explorer.list.length === 0)) {
+       refreshExplorerList();
+    }
+
+    const names = ['MARKET','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK', 'ASK AI', 'EXPLORER'];
     let nav = '';
     names.forEach((n, i) => {
       nav += i === idx
@@ -1195,7 +2093,17 @@ function startDashboard() {
   screen.key(['f6'], () => activateTab(5));
   screen.key(['f7'], () => activateTab(6));
   screen.key(['f8'], () => activateTab(7));
-  screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
+  screen.key(['f9'], () => activateTab(8));
+  screen.key(['escape', 'q', 'Q', 'C-c'], (ch, key) => {
+    if (key && key.name === 'c' && key.ctrl) return process.exit(0);
+    if (activeModal) {
+      activeModal.destroy();
+      activeModal = null;
+      screen.render();
+      return;
+    }
+    process.exit(0);
+  });
 
   screen.key(['i', 'I'], () => {
     if (current === 1) { // Wallet tab
@@ -1206,6 +2114,14 @@ function startDashboard() {
       getLineInput(screen, 'Enter token mint address or symbol (e.g. BONK / WIF / JUP):', val => {
         if (val) loadToken(val); else buildTokenTab(); screen.render();
       });
+    } else if (current === 7) { // AI tab
+      getLineInput(screen, 'ASK SOLANA TERMINAL AI:', query => {
+        if (query) handleAIQuery(query);
+      });
+    } else if (current === 8) { // Explorer tab
+      getLineInput(screen, 'Enter Transaction Signature to inspect (base58):', sig => {
+        if (sig) loadExplorerDetails(sig); else refreshExplorerList();
+      });
     }
   });
 
@@ -1213,7 +2129,10 @@ function startDashboard() {
     if (current === 0) refreshMarket();
     else if (current === 1 && walletAddr) loadWallet(walletAddr);
     else if (current === 2 && tokenQuery) loadToken(tokenQuery);
+    else if (current === 3) refreshNews();
     else if (current === 6) refreshNetwork();
+    else if (current === 7) buildAITab();
+    else if (current === 8) { if (expTxQuery) loadExplorerDetails(expTxQuery); else refreshExplorerList(); }
   });
 
   screen.key(['t', 'T'], () => {
@@ -1229,33 +2148,40 @@ function startDashboard() {
   });
 
   // ─────────────────────────────────────────────
-  // LIVE FEED (sidebar + F6 stream)
+  // LIVE FEED — sidebar seed (real stream fills this)
   // ─────────────────────────────────────────────
-  const tBadge = { SWAP: '>> SWAP', BUY: '++ BUY ', WHALE: '** WHALE', ALERT: '!! ALERT', NEW: '** NEW ' };
-  const tColor = { SWAP: '#00FFFF-fg', BUY: '#00FF88-fg', WHALE: '#FFD700-fg', ALERT: '#FF6B6B-fg', NEW: '#00FFFF-fg' };
-
-  DATA.liveFeed.slice(0, 5).forEach(e => {
-    const col = tColor[e.type] || 'white-fg';
-    feedLog.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
-    liveFull.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text}{/}`);
+  // Seed the sidebar with a few stub entries on startup
+  DATA.liveFeed.slice(0, 3).forEach(e => {
+    const col = e.type === 'WHALE' ? '#FFD700-fg' : e.type === 'SWAP' ? '#00FFFF-fg' : '#00FF88-fg';
+    feedLog.log(`{#999999-fg}${nowTime()}{/}  {${col}}${e.type.padEnd(5)}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
   });
-
-  setInterval(() => {
-    const e   = DATA.liveFeed[Math.floor(Math.random() * DATA.liveFeed.length)];
-    const col = tColor[e.type] || 'white-fg';
-    feedLog.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
-    liveFull.log(`{#999999-fg}${nowTime()}{/}  {${col}}${tBadge[e.type] || e.type}{/}  {white-fg}${e.text}{/}`);
-    screen.render();
-  }, 3000);
 
   // ─────────────────────────────────────────────
   // DATA LOADERS
   // ─────────────────────────────────────────────
+  async function refreshNews() {
+    if (newsLoading) return;
+    if (buildNewsTab._stopLoader) { buildNewsTab._stopLoader(); buildNewsTab._stopLoader = null; }
+    newsLoading = true; newsError = null;
+    buildNewsTab(); screen.render();
+    try {
+      await loadNewsData();
+      newsLoading = false;
+    } catch (e) {
+      newsLoading = false;
+      newsError = e.message.substring(0, 80);
+    }
+    if (buildNewsTab._stopLoader) { buildNewsTab._stopLoader(); buildNewsTab._stopLoader = null; }
+    buildNewsTab(); newsScroll.setScrollPerc(0); screen.render();
+  }
+
   async function refreshMarket() {
     try {
       await loadMarketData();
       refreshTicker(); buildMarketTable(); buildStatsRow();
-      buildGainers(); buildLosers(); updateLiveHero();
+      buildGainers(); buildLosers(); buildMacroRow();
+      // Update live header if live section is active
+      if (liveBooted) { renderLiveHeader(); renderLiveStats(); }
     } catch (e) {
       mktBox.setContent(errorBanner('Market data: ' + e.message.substring(0, 60)));
       mktBox.height = 10;
@@ -1281,13 +2207,21 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   activateTab(0);
   buildNewsTab(); buildAlertsTab();
-  buildMarketTable(); buildStatsRow(); buildNetworkTab();
-  buildWalletTab(); buildTokenTab(); buildAiTab();
+  buildMarketTable(); buildStatsRow(); buildMacroRow(); buildNetworkTab();
+  buildWalletTab(); buildTokenTab(); buildAITab();
+  
+  setInterval(() => {
+    if (current === 3 && !newsLoading && !activeModal) buildNewsTab();
+    screen.render();
+  }, 1000);
+
   screen.render();
 
-  Promise.all([refreshMarket(), refreshNetwork()]).then(() => screen.render());
+  // Initial data loads
+  Promise.all([refreshMarket(), refreshNetwork(), refreshNews()]).then(() => screen.render());
   setInterval(refreshMarket,  CFG.MARKET_REFRESH_MS);
   setInterval(refreshNetwork, CFG.NETWORK_REFRESH_MS);
+  setInterval(refreshNews,    90000); // News refresh every 90s
 }
 
 module.exports = { startDashboard };

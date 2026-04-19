@@ -7,6 +7,7 @@
 
 const API = require('./api');
 const CFG = require('./config');
+const { fetchNewsAggregated } = API;
 
 // ── Live data store ────────────────────────────────────
 const DATA = {
@@ -39,6 +40,14 @@ const DATA = {
     { type: 'WHALE', text: 'WHALE  15,000 SOL staked  new validator  [8vLq...1uRp]'            },
   ],
 
+  // Explorer Tab state
+  explorer: {
+    list: [], 
+    details: null, 
+    loading: false, 
+    error: null 
+  },
+
   // Alerts are static (no free alert API available)
   alerts: [
     { id: 'ALT001', token: 'SOL',  condition: 'PRICE > $150',        status: 'ACTIVE',    triggered: false, created: '04-14 09:00', triggeredAt: null        },
@@ -48,13 +57,10 @@ const DATA = {
     { id: 'ALT005', token: 'JUP',  condition: 'PRICE < $1.00',       status: 'ACTIVE',    triggered: false, created: '04-13 18:00', triggeredAt: null        },
   ],
 
-  // Static news (no free live news API)
-  news: [
-    { time: '—', source: 'SOLANA',     tag: 'DATA',   text: 'Real-time network data: check F8 NETWORK tab for live epoch, TPS, validators', priority: 'medium' },
-    { time: '—', source: 'DEXSCREEN',  tag: 'DATA',   text: 'Live DEX prices powered by DexScreener API — refreshes every 30s',              priority: 'low'    },
-    { time: '—', source: 'ON-CHAIN',   tag: 'DATA',   text: 'Wallet data from Solana mainnet RPC — use F3 with your wallet address',         priority: 'low'    },
-    { time: '—', source: 'TERMINAL',   tag: 'NEW',    text: 'Press F3 to analyze any wallet · F4 to deep dive any token by mint address',   priority: 'medium' },
-  ],
+  // Populated by loadNewsData() — live aggregated news
+  news: [],
+  newsLastUpdated: null,
+  newsLoading: false,
 };
 
 // ═════════════════════════════════════════════════════════
@@ -62,12 +68,19 @@ const DATA = {
 // ═════════════════════════════════════════════════════════
 
 async function loadMarketData() {
-  const result = await API.fetchMarketData();
+  const [result, macro] = await Promise.all([
+    API.fetchMarketData(),
+    API.fetchCMCMacroData()
+  ]);
   DATA.market      = result.market;
   DATA.topGainers  = result.topGainers;
   DATA.topLosers   = result.topLosers;
   DATA.sparklines  = result.sparklines;
   DATA.chartData   = result.chartData;
+  DATA.macro       = macro || {
+    marketCap: 0, marketCapChange: 0, globalVolume: 0, globalVolumeChange: 0,
+    fearGreedValue: 50, fearGreedClass: 'Neutral', altcoinIndex: 35
+  };
   return DATA;
 }
 
@@ -111,15 +124,65 @@ async function loadNetworkData() {
 }
 
 async function loadWalletData(address) {
-  const result    = await API.fetchWalletData(address);
+  const [result, score] = await Promise.all([
+    API.fetchWalletData(address),
+    API.fetchFairScaleScore(address)
+  ]);
+  result.fairScale = score;
   DATA.wallet     = result;
   return DATA;
 }
 
 async function loadTokenData(mintOrSymbol, timeframe) {
-  const result  = await API.fetchTokenData(mintOrSymbol, timeframe);
-  DATA.token    = result;
+  const [result, socials] = await Promise.all([
+    API.fetchTokenData(mintOrSymbol, timeframe),
+    API.fetchTwitterRSS(mintOrSymbol)
+  ]);
+  DATA.token = result;
+  DATA.tokenSocials = socials;
   return DATA;
 }
 
-module.exports = { DATA, loadMarketData, loadNetworkData, loadWalletData, loadTokenData };
+async function loadNewsData() {
+  DATA.newsLoading = true;
+  const [items, defaultSocials] = await Promise.all([
+    API.fetchNewsAggregated(),
+    API.fetchTwitterRSS('solana')
+  ]);
+  DATA.news = items;
+  if (defaultSocials) DATA.tokenSocials = defaultSocials;
+  DATA.newsLastUpdated = new Date();
+  DATA.newsLoading = false;
+  return DATA;
+}
+
+// ── Explorer Data Loaders ─────────────────────────────────
+async function loadExplorerList() {
+  DATA.explorer.loading = true;
+  try {
+    const list = await API.fetchLatestTransactions();
+    DATA.explorer.list = list;
+    DATA.explorer.error = null;
+  } catch (e) {
+    DATA.explorer.error = e.message;
+  }
+  DATA.explorer.loading = false;
+  return DATA;
+}
+
+async function loadExplorerDetails(signature) {
+  DATA.explorer.loading = true;
+  DATA.explorer.details = null;
+  try {
+    const details = await API.fetchTransactionDetails(signature);
+    if (details.error) throw new Error(details.error);
+    DATA.explorer.details = details;
+    DATA.explorer.error = null;
+  } catch (e) {
+    DATA.explorer.error = e.message;
+  }
+  DATA.explorer.loading = false;
+  return DATA;
+}
+
+module.exports = { DATA, loadMarketData, loadNetworkData, loadWalletData, loadTokenData, loadNewsData, loadExplorerList, loadExplorerDetails };

@@ -6,6 +6,9 @@ module.exports = {
   // Solana Public RPC — override via SOLANA_RPC in .env for better reliability
   SOLANA_RPC: process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com',
 
+  // High-capacity public node for heavy Explorer queries
+  EXPLORER_RPC: 'https://solana-rpc.publicnode.com',
+
   // DexScreener (Solana token prices — free, no key)
   DEXSCREENER_BASE: 'https://api.dexscreener.com',
 
@@ -16,6 +19,15 @@ module.exports = {
   COINDESK_API_KEY: process.env.COINDESK_API_KEY || '',
   BIRDEYE_API_KEY:  process.env.BIRDEYE_API_KEY  || '',
   RUGCHECK_API_KEY: process.env.RUGCHECK_API_KEY || '',
+  WHALE_ALERT_API_KEY: process.env.WHALE_ALERT_API_KEY || '',
+  BITQUERY_API_KEY: process.env.BITQUERY_API_KEY || '',
+  CRYPTOPANIC_API_KEY: process.env.CRYPTOPANIC_API_KEY || '',
+  COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY || '',
+  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
+  GROQ_BASE_URL: 'https://api.groq.com/openai/v1',
+  AI_MODEL: 'llama-3.3-70b-versatile',
+  AI_SYSTEM_PROMPT: 'You are the Antigravity Solana Terminal AI, a high-frequency trading assistant. Your responses must be concise, technical, and formatted for a terminal (no markdown headers, use plain text with accents). Focus on Solana ecosystem intelligence.',
+  FAIRSCALE_API_KEY: process.env.FAIRSCALE_API_KEY || '',
 
   // Major cryptos — fetched from CoinDesk (accurate spot prices in USD)
   COINDESK_SYMBOLS: ['BTC', 'ETH', 'SOL'],
