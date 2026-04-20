@@ -8,10 +8,54 @@
 
 <div align="center">
   <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://via.placeholder.com/600x400.png?text=CLI+Terminal+Screenshot" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://via.placeholder.com/600x400.png?text=Web+Dashboard+Screenshot" width="48%" alt="Web Dashboard Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-cli.png" width="48%" alt="CLI Terminal Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-market.png" width="48%" alt="Web Dashboard Screenshot">
   <br>
-  <em>Left: The high-speed CLI Terminal. Right: The fully synchronized Web Dashboard.</em>
+  <em>Markets.</em>
+</div>
+
+
+<div align="center">
+  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-token.png" width="48%" alt="CLI Terminal Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-token.png" width="48%" alt="Web Dashboard Screenshot">
+  <br>
+  <em>Markets.</em>
+</div>
+
+
+<div align="center">
+  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-wallet.png" width="48%" alt="CLI Terminal Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-wallet.png" width="48%" alt="Web Dashboard Screenshot">
+  <br>
+  <em>Markets.</em>
+</div>
+
+<div align="center">
+  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-tx.png" width="48%" alt="CLI Terminal Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-live.png" width="48%" alt="Web Dashboard Screenshot">
+  <br>
+  <em>Markets.</em>
+</div>
+
+
+<div align="center">
+  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-ai.png" width="48%" alt="CLI Terminal Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-news.png" width="48%" alt="Web Dashboard Screenshot">
+  <br>
+  <em>Markets.</em>
+</div>
+
+
+<div align="center">
+  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-network.png" width="48%" alt="CLI Terminal Screenshot">
+  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-alerts.png" width="48%" alt="Web Dashboard Screenshot">
+  <br>
+  <em>Markets.</em>
 </div>
 
 <br>
