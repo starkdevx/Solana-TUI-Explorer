@@ -1,0 +1,16 @@
+{
+  "name": "solana-terminal-proxy",
+  "version": "1.0.0",
+  "description": "Secure proxy server for Solana Bloomberg Terminal API keys",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "groq-sdk": "^0.3.3"
+  }
+}
