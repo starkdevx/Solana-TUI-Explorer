@@ -1424,40 +1424,33 @@ async function fetchCMCMacroData() {
   }
 }
 
-// ── Groq AI Assistant API ───────────────────────
+// ── Secure Proxy AI Assistant API ───────────────────────
 async function fetchAIResponse(userMessage, chatHistory = []) {
-  const { GROQ_API_KEY, GROQ_BASE_URL, AI_MODEL, AI_SYSTEM_PROMPT } = CFG;
-  if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY is missing in configuration.');
+  const { PROXY_URL, AI_SYSTEM_PROMPT } = CFG;
+  
+  if (!PROXY_URL) throw new Error('PROXY_URL is missing in configuration.');
 
-  const messages = [
-    { role: 'system', content: AI_SYSTEM_PROMPT },
-    ...chatHistory,
-    { role: 'user', content: userMessage }
-  ];
+  // Optionally compile a short history if needed, though proxy is currently handling a single message
+  const combinedMessage = chatHistory.length > 0 
+    ? chatHistory.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n') + `\nUSER: ${userMessage}`
+    : userMessage;
 
   try {
-    const res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+    const res = await fetch(`${PROXY_URL}/api/ai`, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: AI_MODEL,
-        messages: messages,
-        temperature: 0.7,
-        max_tokens: 512
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: combinedMessage })
     });
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.error?.message || 'Groq API error');
+      throw new Error(err.error || 'Proxy API error');
     }
 
     const data = await res.json();
-    return data.choices[0].message.content;
+    return data.reply;
   } catch (e) {
+    if (e.message?.includes('fetch failed')) throw new Error('Cannot connect to proxy server. Is the EC2 instance running?');
     throw e;
   }
 }

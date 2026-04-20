@@ -23,8 +23,11 @@ module.exports = {
   BITQUERY_API_KEY: process.env.BITQUERY_API_KEY || '',
   CRYPTOPANIC_API_KEY: process.env.CRYPTOPANIC_API_KEY || '',
   COINMARKETCAP_API_KEY: process.env.COINMARKETCAP_API_KEY || '',
-  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
-  GROQ_BASE_URL: 'https://api.groq.com/openai/v1',
+  
+  // SECURE BACKEND PROXY
+  // Routes traffic through our AWS EC2 instance instead of exposing keys to clients
+  PROXY_URL: process.env.PROXY_URL || 'http://100.26.192.172:3000',
+  
   AI_MODEL: 'llama-3.3-70b-versatile',
   AI_SYSTEM_PROMPT: 'You are the Antigravity Solana Terminal AI, a high-frequency trading assistant. Your responses must be concise, technical, and formatted for a terminal (no markdown headers, use plain text with accents). Focus on Solana ecosystem intelligence.',
   FAIRSCALE_API_KEY: process.env.FAIRSCALE_API_KEY || '',

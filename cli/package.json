@@ -1,14 +1,24 @@
 {
-  "name": "cli",
+  "name": "solana-bloomberg-terminal",
   "version": "1.0.0",
   "main": "index.js",
+  "bin": {
+    "solana-terminal": "./bin/st.js"
+  },
   "scripts": {
+    "start": "node ./bin/st.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "solana",
+    "bloomberg",
+    "terminal",
+    "crypto",
+    "cli"
+  ],
+  "author": "Superteam Builder",
   "license": "ISC",
-  "description": "",
+  "description": "The ultimate Information Layer for the Solana ecosystem in a beautifully designed terminal.",
   "dependencies": {
     "bless": "^4.0.4",
     "blessed": "^0.1.81",
