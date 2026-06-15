@@ -1,9 +1,9 @@
 {
-  "name": "solana-bloomberg-terminal",
+  "name": "solana-tui-explorer",
   "version": "1.0.0",
   "main": "index.js",
   "bin": {
-    "solana-terminal": "./bin/st.js"
+    "solana-tui-explorer": "./bin/st.js"
   },
   "scripts": {
     "start": "node ./bin/st.js",
@@ -11,8 +11,8 @@
   },
   "keywords": [
     "solana",
-    "bloomberg",
-    "terminal",
+    "tui",
+    "explorer",
     "crypto",
     "cli"
   ],

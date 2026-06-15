@@ -1,5 +1,5 @@
 // =============================================
-// SOLANA TERMINAL CLI — Live Data Store
+// SOLANA TUI EXPLORER CLI — Live Data Store
 // This module holds the current live state.
 // dashboard.js calls loadMarketData(), loadNetworkData(), etc.
 // Each returns the updated store or throws on failure.
@@ -95,6 +95,15 @@ async function loadNetworkData() {
 
   supply.epoch = epoch.current;
 
+  // Try to find SOL price from DexScreener if available to calculate totalStakedUsd
+  let solPrice = 145.0; // fallback default
+  try {
+    const solData = await API.fetchTokenData('So11111111111111111111111111111111111111112');
+    if (solData && solData.price) solPrice = solData.price;
+  } catch (e) {
+    // ignore
+  }
+
   // Build networkStats in the shape dashboard.js expects
   DATA.networkStats = {
     epoch,
@@ -104,7 +113,7 @@ async function loadNetworkData() {
     supply,
     stakeData: {
       totalStaked:    supply.staked.toFixed(1) + 'M SOL',
-      totalStakedUsd: '$' + (supply.staked * (DATA.market.find(m => m.symbol === 'SOL')?.price || 0) / 1e3).toFixed(1) + 'B',
+      totalStakedUsd: '$' + (supply.staked * solPrice / 1e3).toFixed(1) + 'B',
       activeStakers:  '—',
       uniqueWallets:  '—',
       biggestStake:   '—',

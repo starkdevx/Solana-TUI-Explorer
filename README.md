@@ -1,115 +1,177 @@
-<div align="center">
-  <h1>📈 Solana Bloomberg Terminal</h1>
-  <p><b>The ultimate Information & Execution Layer for the Solana ecosystem.</b></p>
-  <p><i>A unified CLI and web dashboard aggregating live markets, network infrastructure, wallet data, and ecosystem news into one high-speed interface.</i></p>
-</div>
+# ⬡ Solana TUI Explorer
 
-<br>
-
-<div align="center">
-  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-cli.png" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-market.png" width="48%" alt="Web Dashboard Screenshot">
-  <br>
-  <em>Markets.</em>
-</div>
-
-
-<div align="center">
-  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-token.png" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-token.png" width="48%" alt="Web Dashboard Screenshot">
-  <br>
-  <em>Markets.</em>
-</div>
-
-
-<div align="center">
-  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-wallet.png" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-wallet.png" width="48%" alt="Web Dashboard Screenshot">
-  <br>
-  <em>Markets.</em>
-</div>
-
-<div align="center">
-  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-tx.png" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-live.png" width="48%" alt="Web Dashboard Screenshot">
-  <br>
-  <em>Markets.</em>
-</div>
-
-
-<div align="center">
-  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-ai.png" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-news.png" width="48%" alt="Web Dashboard Screenshot">
-  <br>
-  <em>Markets.</em>
-</div>
-
-
-<div align="center">
-  <!-- TODO: Replace these placeholder image links with actual screenshots of your CLI and Web Dashboard -->
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/market-network.png" width="48%" alt="CLI Terminal Screenshot">
-  <img src="https://github.com/akshaydhayal/Solana-Bloomberg-Terminal/blob/main/demo/web-alerts.png" width="48%" alt="Web Dashboard Screenshot">
-  <br>
-  <em>Markets.</em>
-</div>
-
-<br>
-
-## 🔍 Deep Dive: The Problem & Solution
-
-**The Problem:**  
-Navigating the Solana ecosystem today is incredibly fragmented, forcing users to constantly juggle dozens of disconnected browser tabs to track markets, debug accounts, execute trades, and monitor infrastructure. This scattered experience creates a steep learning curve and slows down developers, researchers, and traders looking for actionable alpha.
-
-**The Solution:**  
-We built the **Solana Bloomberg Terminal**—the definitive Information & Execution Layer accessed instantly via `npx` (and an upcoming Web dashboard) that aggregates all critical ecosystem data into a single, keyboard-driven command center.
-
-#### Who It's Built For:
-* **Developers:** Can instantly inspect wallets, dive into complex transactions, audit token logic, and monitor live RPC infrastructure health without leaving the terminal.
-* **Traders & Researchers:** Get unmatched speed for market updates, live token tracking, and on-chain alerts.
-* **Everyday Users:** Replaces the need to open 5 different sites just to check their portfolios or swap tokens, making daily Solana interactions completely frictionless.
+> **A Developer-Centric, Keyboard-Driven CLI Explorer for Solana.**  
+> *Never leave your terminal to open Solscan or debug an Anchor program error again.*
 
 ---
 
-## ⚡ Core Features
+## 🔍 The Problem
 
-The terminal solves ecosystem fragmentation through six core pillars:
+Solana developers spend most of their time in the terminal, yet navigating chain diagnostics today is highly fragmented and painful:
 
-1. **Live Infrastructure Mapping:** Geographically tracks over 3,000 global RPC nodes and perfectly tracks the live blockchain slot leader across the physical globe in real-time.
-2. **Ecosystem Intelligence & Alerts:** Aggregates SPL token markets, live crypto news feeds, and instantly triggers custom alerts for massive on-chain events.
-3. **The Execution Layer (DeFi & SNS):** Empowers users to buy/sell meme coins, seamlessly swap assets via Jupiter, and purchase SNS domains natively from the command line.
-4. **Whale & Stablecoin Flow Tracking:** Detects "stealth accumulation" by whales and tracks major USDC remittance flows bridging fiat into on-chain liquidity.
-5. **Custom Indexer & Program Debugger:** Features a custom indexer to deeply track specific wallets/programs alongside instant Anchor IDL parsing to audit live on-chain usage.
-6. **Agentic Web3 AI:** Features an integrated Llama-powered AI assistant that answers complex ecosystem architecture questions and generates code without leaving your workflow.
+1. **Official Solana CLI**: Primarily designed for executing transactions or pulling raw, unformatted JSON blobs. It treats Anchor smart contracts as opaque byte blobs and returns raw hex codes on transaction failures with no debugging context.
+2. **Web Explorers (Solscan/SolanaFM)**: Extremely rich but force a developer to constantly break context, switch tabs, or copy-paste transaction signatures to a browser.
+3. **Mucho CLI**: Functions primarily as a local testnet fixture cloner. Its inspection utilities are highly limited, outputting static text for basic txs with zero live monitoring or simulation capability.
+
+---
+
+## ⚡ The Solution
+
+**Solana TUI Explorer** acts as a real-time, low-latency command center that brings advanced explorer details, account deserialization, and local validator monitoring directly to the terminal workspace. It runs instantly via `npx` with zero setup.
+
+<div align="center">
+  <img src="./demo/market-network.png" width="48%" alt="Network Gossip Radar Map">
+  <img src="./demo/market-tx.png" width="48%" alt="Transaction Inspector & CU Profiler">
+  <br>
+  <em>Live Network Gossip Radar Map & Deep Transaction Profiler inside the Terminal.</em>
+</div>
+
+---
+
+## 🛠️ Core Features & Capabilities
+
+The TUI Explorer is built on six core pillars, accessible via keys **F1 through F6**:
+
+### 1. F1: Network Gossip & Local Validator Health
+* **Live Radar Map**: Geographically tracks validator nodes via gossip IP geolocation using a custom mapped ASCII world radar.
+* **Epoch Progress Tracker**: Displays real-time epoch slot increments, percentages, and estimated time remaining in the current epoch.
+* **TPS & Blocktime Charts**: Solid-filled, real-time TUI charts mapping block speeds and network transaction throughput.
+* **Localhost Dev Validator Monitoring**: Fully integrates with your local `solana-test-validator`. Intercepts slot updates, program deployments, transaction executions, and state modifications happening on your local machine, allowing developers to see their localhost program interactions clearly and instantly in the TUI without parsing through raw console log outputs.
+* **Validator Leaderboard**: Lists the top 10 validators by active stake, delegator count, and commission rates.
+
+### 2. F2: Account & Program Inspector
+* **Type Auto-Detection**: Paste any public key. The inspector automatically queries `getAccountInfo` and identifies whether it is an SPL Token Account, Mint Account, System Account, Stake Account, PDA, or Program.
+* **State Deserialization**: Deserializes raw account buffer data into readable keys and variables (owner, delegated amount, supply, decimals, authorities) instead of opaque hex blobs.
+* **Anchor IDL Parser**: Fetch on-chain program IDLs or load local IDL JSON files to inspect program methods, parameter schemas, and expected account bounds.
+
+### 3. F3: SPL Token Explorer
+* **Token Parameters**: Deep audit of SPL Token specifications, mint authority state, and freeze authority settings.
+* **Token-2022 Extensions**: Explores new token program extensions (metadata pointers, transfer fees, interest rates) natively.
+* **RugCheck Integration**: Performs a security audit via RugCheck APIs, reporting rug scores, LP locking status, and warning markers.
+
+### 4. F4: AI Debugger Assistant
+* **Solana Context Engine**: Powered by Groq Llama 3.3-70b-versatile, acting as an on-chain systems assistant.
+* **Error Decoder**: Feed in obscure hex errors (e.g., custom program error `0x1771`) and get instant translations (e.g., Anchor `ConstraintHasOne` violation) and Rust remediation scripts.
+
+### 5. F5: Transaction Explorer, Simulator & Live Indexer
+* **Instruction Stack Trace**: Maps out the exact call sequence (including inner CPI calls) of any finalized transaction signature.
+* **Balance Delta Auditor**: Displays a table of all inputs and outputs showing which signers, write-locks, and payers had their SOL or token balances changed.
+* **Compute Unit (CU) Profiler**: Displays a stacked, multi-colored bar chart showing exactly which instructions consumed the most compute budget.
+* **Tx Simulator (Dry Run)**: Run pre-flight simulations to profile compute units and audit account balances before submitting transactions on-chain.
+* **Live Program Indexer**: Subscribe to any program ID via RPC WebSockets to capture and stream decoded logs, instructions, and events in real time.
+
+### 6. F6: LiteSVM Local Testing
+* **Split Panel Inspector**: Left pane lists test transactions (Success/Failure status and signature); right pane displays detailed instruction log stack traces, timestamps, and compute unit footprints.
+* **Real-time Session Watcher**: Listens to local log file updates to automatically parse and refresh the TUI display as `cargo test` executes.
+* **Post-Execution State Retention**: Keeps critical transaction details visible on screen even after the test suite finishes running and the memory-bound LiteSVM instance shuts down.
+
+---
+
+## 📐 System Architecture & Design Document (Build Process)
+
+Solana TUI Explorer is structured as a modular terminal dashboard. Below is the system flow and design layout of the TUI Explorer:
+
+```
+┌────────────────────────────────────────────────────────┐
+│                  Solana TUI Explorer                   │
+│                                                        │
+│   ┌────────────────────────────────────────────────┐   │
+│   │             Blessed Dashboard Layout           │   │
+│   │   (F1: Network │ F2: Account │ F3: Token...)   │   │
+│   └──────┬──────────────────────────────────┬──────┘   │
+└──────────┼──────────────────────────────────┼──────────┘
+           │ WebSocket & RPC                  │ File Watches & Sockets
+           ▼                                  ▼
+┌──────────────────────┐            ┌────────────────────┐
+│      Solana RPC      │            │  LiteSVM Testbed / │
+│   (Mainnet/Devnet)   │            │   Local Validator  │
+└──────────┬───────────┘            └─────────┬──────────┘
+           ▼                                  ▼
+┌──────────────────────┐            ┌────────────────────┐
+│   On-Chain IDLs &    │            │   Local Session    │
+│  Account Deser.      │            │   Transaction Logs │
+└──────────────────────┘            └────────────────────┘
+```
+
+### 1. Modular Core Components
+* **Blessed Terminal UI Layout**: Utilizes Node.js `blessed` and `blessed-contrib` libraries to build a responsive, grid-based dashboard layout. Keyboard keypress handlers drive fast context switches between tabs (Network, Accounts, Tokens, LiteSVM/Localhost, and Explorer views).
+* **RPC & Telemetry Streamers**: Maintains WebSocket connection streams (`@solana/web3.js`) to capture new slot announcements, transaction activities, and network health stats, rendering them dynamically inside scrolling charts and log panels.
+* **Local Testbed Monitor Daemon**: Watches designated local workspace log files generated by `LiteSVM` or intercepts port `8899` localhost RPC events to display state mutations from test executions in real time.
+* **IDL Serialization Engine**: Queries and caches Anchor IDL schemas to dynamically deserialize instruction data and account structures inside the UI panels.
+
+### 2. Technology Stack
+* **Languages**: JavaScript/Node.js.
+* **TUI Frameworks**: `blessed` and `blessed-contrib` for mouse/keyboard inputs and component layout.
+* **Solana Interface**: `@solana/web3.js` for RPC and socket calls.
+* **Deployment & Infrastructure**: Backend services deployed on AWS EC2 instances, utilizing Redis for caching hot account variables and processed IDLs to optimize RPC limits and maintain high TUI performance.
+* **Build/Packaging**: Node standard package manager (`npm`), compiled down to a standard global CLI package binary run via `npx`.
 
 ---
 
 ## 🚀 Getting Started
 
-To launch the CLI terminal instantly on any machine with Node.js installed, simply run:
+Launch the developer TUI instantly using Node:
 
 ```bash
-npx solana-terminal
+npx solana-tui-explorer
 ```
 
-### Manual Installation (For Contributors)
+### Manual Installation (For Development/Contribution)
 
-If you'd like to run it locally or contribute:
+If you would like to run the explorer locally or add deserializers:
 
 ```bash
-git clone https://github.com/akshaydhayal/Solana-Bloomberg-Terminal.git
-cd Solana-Bloomberg-Terminal/cli
+# Clone the repository
+git clone https://github.com/akshaydhayal/Solana-TUI-Explorer.git
+cd Solana-TUI-Explorer/cli
+
+# Install dependencies
 npm install
+
+# Run the CLI
 node bin/st.js
 ```
 
 ---
 
-## 📅 Roadmap & Milestones
+## ⚙️ Navigation & Shortcuts
 
-* **Milestone 1 (The CLI Terminal):** Launch the high-speed CLI terminal to NPM, backed by secure cloud proxy servers, integrating the live infrastructure map and Jupiter/SNS execution layers.
-* **Milestone 2 (The Web Dashboard):** Port the terminal’s rendering engine and real-time feeds into a fully synchronized, responsive Web Dashboard with browser-wallet integrations to onboard non-technical users.
+* `F1` - `F6` : Switch panels.
+* `I` : Open the input modal (enter transaction signatures, token mints, wallet addresses, or ask the AI debugger).
+* `R` : Force-refresh the active tab's RPC or session state.
+* `T` : Toggle token chart timeframes (`5M`, `1H`, `1D`).
+* `C` : Toggle connection network (Mainnet-Beta, Devnet, Testnet, Localhost).
+* `↑ / ↓` or `J / K` : Scroll vertically through list menus or text areas.
+* `ESC / Q` : Quit the application.
+
+---
+
+## 🧪 LiteSVM Local Testing Integration Guide
+
+To track in-memory LiteSVM transaction executions directly in your TUI Explorer:
+
+1. Copy the wrapper helper [litesvm_explorer.rs](file:///c:/Users/TIS/Documents/Akshay/Solana-TUI-Explorer/litesvm-integration/litesvm_explorer.rs) into your Rust project (e.g. `tests/litesvm_explorer.rs`).
+2. Add `serde` and `serde_json` to your project dependencies in `Cargo.toml`.
+3. In your integration tests, import the module and use the wrapper `ExplorerLiteSVM` instead of `LiteSVM`:
+   ```rust
+   // Import the module
+   mod litesvm_explorer;
+   use litesvm_explorer::ExplorerLiteSVM;
+
+   #[test]
+   fn test_my_program() {
+       // ExplorerLiteSVM wraps LiteSVM and auto-clears log files on boot
+       let mut svm = ExplorerLiteSVM::new();
+
+       // Execute transaction tests as usual
+       let res = svm.send_transaction(tx);
+       assert!(res.is_ok());
+   }
+   ```
+4. Start your TUI explorer in the program project directory, switch to the **F6 LITESVM** tab, and run your tests using:
+   ```bash
+   cargo test
+   ```
+   The TUI will instantly capture and display transaction stack traces, compute footprint graphs, and diagnostic execution logs!
+
+

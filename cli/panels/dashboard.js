@@ -1,5 +1,5 @@
 // =============================================
-// SOLANA TERMINAL CLI  ·  v4
+// SOLANA TUI EXPLORER CLI  ·  v4
 // Theme: green/cyan on black (classic hacker terminal)
 // Charts: solid-fill bar chart matching reference image
 // =============================================
@@ -76,7 +76,7 @@ function rpcCall(method, params = []) {
       hostname: rpcUrl.hostname,
       path: rpcUrl.pathname + rpcUrl.search,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'SolanaTerminal/1.0' },
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'SolanaTUIExplorer/1.0' },
       timeout: 10000,
     };
     const req = https.request(options, res => {
@@ -686,8 +686,9 @@ function getSelectionMenu(screen, promptText, options, cb) {
 
 // ══════════════════════════════════════════════════════════
 function startDashboard() {
+  let localList;
   const screen = blessed.screen({
-    smartCSR: true, title: 'Solana Terminal',
+    smartCSR: true, title: 'Solana TUI Explorer',
     fullUnicode: true, mouse: true, forceUnicode: true,
   });
 
@@ -708,7 +709,7 @@ function startDashboard() {
   // Logo — left
   blessed.text({ parent: topRow, top: 0, left: 0, tags: true,
     style: { bg: '#002E1A' },
-    content: ' {#00FF88-fg}{bold}⬡ SOLANA TERMINAL{/}  {#336655-fg}│{/}  {#668877-fg}Real-Time Market Intelligence{/}' });
+    content: ' {#00FF88-fg}{bold}⬡ SOLANA TUI EXPLORER{/}  {#336655-fg}│{/}  {#668877-fg}On-Chain Developer Inspection TUI{/}' });
 
   // Live dot + clock — right
   const clockBox = blessed.text({ parent: topRow, top: 0, right: 0, tags: true,
@@ -747,9 +748,11 @@ function startDashboard() {
     content: `{#005533-fg}${'─'.repeat(400)}{/}` });
 
   // ─────────────────────────────────────────────
-  // RIGHT SIDEBAR
+  // RIGHT SIDEBAR (Disabled for full-width layout)
   // ─────────────────────────────────────────────
-  const SBW = 34;
+  const SBW = 0;
+  const feedLog = { log: () => {} };
+  /*
   const sidebar = blessed.box({
     parent: root, top: 4, right: 0, width: SBW, bottom: 2,
     style: BOX,
@@ -799,6 +802,7 @@ function startDashboard() {
     parent: feedBox, top: 0, left: 0, width: '100%-2', height: '100%-2',
     fg: 'white', tags: true, style: BOX,
   });
+  */
 
   // ─────────────────────────────────────────────
   // MAIN PANE
@@ -813,6 +817,8 @@ function startDashboard() {
     if (current === 3 && DATA.news.length > 0) {
       newsSelected = Math.max(0, newsSelected - 1);
       buildNewsTab(); screen.render();
+    } else if (current === 5 && localList) {
+      // Let the focused list handle arrow/j/k keys natively
     } else {
       activeScroll?.scroll(-1); screen.render();
     }
@@ -822,6 +828,8 @@ function startDashboard() {
     if (current === 3 && DATA.news.length > 0) {
       newsSelected = Math.min(DATA.news.length - 1, newsSelected + 1);
       buildNewsTab(); screen.render();
+    } else if (current === 5 && localList) {
+      // Let the focused list handle arrow/j/k keys natively
     } else {
       activeScroll?.scroll(1); screen.render();
     }
@@ -858,170 +866,7 @@ function startDashboard() {
   }
   const mkBox = (parent, extra = {}) => blessed.box({ parent, tags: true, style: BOX, ...extra });
 
-  // ══════════════════════════════════════════════════════════
-  // F1  MARKET
-  // ══════════════════════════════════════════════════════════
-  const tabMarket = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  blessed.text({ parent: tabMarket, top: 0, left: 1, tags: true, style: BOX,
-    content: `{#00FF88-fg}{bold}MARKET OVERVIEW{/}  {white-fg}Live DEX prices  │  CoinMarketCap Globals{/}   {#00FF88-fg}● LIVE{/}` });
 
-  // SOL stat card
-  const statsBox = blessed.box({
-    parent: tabMarket, top: 1, left: 0, right: 0, height: 5,
-    tags: true, style: BOX, border: BCYAN,
-  });
-  function buildStatsRow() {
-    const sol = DATA.market.find(m => m.symbol === 'SOL');
-    if (!sol) { statsBox.setContent(`\n${loadingBanner('Connecting to DexScreener...')}`); return; }
-    const pctStr = fmtPct(sol.pct);
-    const pctTag = sol.pct >= 0 ? `{#00FF88-fg}${pctStr}{/}` : `{#FF6B6B-fg}${pctStr}{/}`;
-    const C1 = 22, C2 = 22, C3 = 20;
-    statsBox.setContent(
-      ' ' + LBL(pad('SOL PRICE', C1))           + LBL(pad('24H CHANGE', C2))       + LBL(pad('VOLUME 24H', C3)) + LBL('MKT CAP')    + '\n' +
-      ' ' + `{#00FF88-fg}{bold}${pad(fmtPrice(sol.price), C1)}{/}` +
-             pctTag + ' '.repeat(Math.max(1, C2 - pctStr.length)) +
-             Y(pad(fmtVol(sol.vol), C3))         + WW('$' + (sol.mcap || '-'))                                   + '\n' +
-      ' ' + GRY(pad('via DexScreener/USDC', C1)) + GRY(pad('24h rolling', C2))     + GRY(pad('total DEX', C3))  + GRY('fully diluted')
-    );
-  }
-
-  // CoinMarketCap Macro Cards (Market Cap, Altcoin Index, Fear/Greed)
-  const macroBox = blessed.box({ parent: tabMarket, top: 6, left: 0, right: 0, height: 7, tags: true, style: BOX, border: BCYAN });
-  const mcBox = blessed.box({ parent: macroBox, top: 0, left: '0%', width: '25%', height: 5, tags: true, style: BOX });
-  const volBox = blessed.box({ parent: macroBox, top: 0, left: '25%', width: '25%', height: 5, tags: true, style: BOX });
-  const fgBox = blessed.box({ parent: macroBox, top: 0, left: '50%', width: '25%', height: 5, tags: true, style: BOX });
-  const asiBox = blessed.box({ parent: macroBox, top: 0, left: '75%', width: '25%', height: 5, tags: true, style: BOX });
-
-  function buildMacroRow() {
-    const m = DATA.macro;
-    if (!m) { mcBox.setContent(`\n${loadingBanner('Fetching CMC...')}`); return; }
-    
-    // Formatting Helpers
-    const mcapStr = '$' + (m.marketCap / 1e12).toFixed(2) + 'T';
-    const mcapCol = m.marketCapChange >= 0 ? `{#00FF88-fg}▲ ${m.marketCapChange.toFixed(2)}%{/}` : `{#FF6B6B-fg}▼ ${Math.abs(m.marketCapChange).toFixed(2)}%{/}`;
-    
-    const volStr = '$' + (m.globalVolume / 1e9).toFixed(2) + 'B';
-    const volCol = m.globalVolumeChange >= 0 ? `{#00FF88-fg}▲ ${m.globalVolumeChange.toFixed(2)}%{/}` : `{#FF6B6B-fg}▼ ${Math.abs(m.globalVolumeChange).toFixed(2)}%{/}`;
-    
-    const fgClr = m.fearGreedValue >= 70 ? '{#00FF88-fg}' : m.fearGreedValue <= 30 ? '{#FF6B6B-fg}' : '{#FFD700-fg}';
-
-    // Helper for progress bar "loader" style
-    const mkLoader = (val, clr) => {
-      const filled = Math.round(val / 10);
-      return `${clr}${'█'.repeat(filled)}{/}{#333333-fg}${'█'.repeat(10 - filled)}{/}`;
-    };
-
-    // GUI box injections
-    mcBox.setContent(
-      ` ${WW('Market Cap')}  {#557799-fg}Global{/}\n` +
-      ` {bold}${W(mcapStr)}{/} ${mcapCol}\n\n` +
-      ` ${GRY('BTC Dom: ')}{#00FF88-fg}${W((m.btcDominance||0).toFixed(1)+'%')}{/}`
-    );
-
-    volBox.setContent(
-      ` ${WW('24H Volume')}  {#557799-fg}Global{/}\n` +
-      ` {bold}${W(volStr)}{/} ${volCol}\n\n` +
-      ` ${GRY('DeFi Vol: ')}{#00FF88-fg}${W('$'+((m.defiVolume||0)/1e9).toFixed(1)+'B')}{/}`
-    );
-
-    fgBox.setContent(
-      ` ${WW('Fear & Greed')}  {#557799-fg}Index{/}\n` +
-      ` {bold}${W(Math.round(m.fearGreedValue))}{/}${GRY('/100')}  ${fgClr}${m.fearGreedClass}{/}\n` +
-      ` ${mkLoader(m.fearGreedValue, fgClr)}\n\n` 
-    );
-
-    asiBox.setContent(
-      ` ${WW('Altcoin Season')}  {#557799-fg}Index{/}\n` + 
-      ` {bold}${W(m.altcoinIndex)}{/}${GRY('/100')}  ${m.altcoinIndex > 50 ? '{#00FF88-fg}ALT{/}' : '{#FFD700-fg}BTC{/}'}\n` +
-      ` ${mkLoader(m.altcoinIndex, '{#9945FF-fg}')}\n\n` 
-      
-    );
-  }
-
-  // Market table
-  const mktScroll = mkScroll(tabMarket, { top: 13, left: 0, right: 0, bottom: 0 });
-  const mktBox    = mkBox(mktScroll, { width: '100%-2' });
-
-  const MC = [8, 14, 14, 11, 10, 9];
-  function buildMarketTable() {
-    if (!DATA.market.length) {
-      if (!buildMarketTable._stopLoader) {
-        buildMarketTable._stopLoader = createAnimatedLoader(screen, mktBox,
-          'Fetching live prices from DexScreener...',
-          ['Connecting to DexScreener API...', 'Pulling DEX order book data...', 'Calculating 24h price changes...', 'Syncing Solana token prices...']);
-      }
-      mktBox.height = 10; return;
-    }
-    if (buildMarketTable._stopLoader) { buildMarketTable._stopLoader(); buildMarketTable._stopLoader = null; }
-    const ts  = new Date().toLocaleTimeString('en-US', { hour12: false });
-    let out   = '';
-    out += TL_BG('PRICE TABLE') + `  ${WW('Live DEX prices')}  ${GRY('updated ' + ts)}\n`;
-    out += HR(82) + '\n';
-    out += ' ' + LBL(pad('SYMBOL', MC[0])) + LBL(pad('NAME',    MC[1])) +
-           LBL(pad('PRICE',        MC[2])) + LBL(pad('24H %',   MC[3])) +
-           LBL(pad('VOLUME',       MC[4])) + LBL(pad('MKT CAP', MC[5])) + LBL('MOMENTUM') + '\n';
-    out += HR(82) + '\n';
-
-    DATA.market.forEach(d => {
-      const isUp   = d.pct > 0;
-      const pctStr = fmtPct(d.pct);
-      const pctTag = isUp ? `{#00FF88-fg}${pctStr}{/}` : `{#FF6B6B-fg}${pctStr}{/}`;
-      const nameS  = (d.name || d.symbol).substring(0, MC[1] - 1);
-      const priceS = fmtPrice(d.price);
-      const volS   = fmtVol(d.vol);
-      const mcapS  = '$' + (d.mcap || '-');
-
-      // Momentum 1-line solid bar graph (REAL historical data)
-      let spk = '';
-      const c = isUp ? '{#00FF88-fg}' : '{#FF6B6B-fg}';
-      
-      if (d.sparkArray && d.sparkArray.length > 0) {
-        // Map true 24h historical array to 12 chars
-        // Using up to ▆ (5/8 block) so top of cell is ALWAYS empty for padding
-        const src = d.sparkArray;
-        // downsample to 12 points
-        const points = [];
-        for(let i=0; i<12; i++) {
-            const idx = Math.floor(i * src.length / 12);
-            points.push(src[idx]);
-        }
-        const min = Math.min(...points);
-        const max = Math.max(...points);
-        const rng = max - min || 1;
-        
-        points.forEach(v => {
-          const norm = (v - min) / rng;
-          if (norm < 0.2)      spk += '\u2581'; // acts as baseline anchor
-          else if (norm < 0.4) spk += '▂';
-          else if (norm < 0.6) spk += '▄';
-          else if (norm < 0.8) spk += '▅';
-          else                 spk += '▆'; // Cap at ▆ to create built-in vertical spacing
-        });
-      } else {
-        // Fallback smooth curve capped at ▆
-        for(let i=0; i<12; i++) {
-          let norm = isUp ? (0.2 + (i/11)*0.8) : (1.0 - (i/11)*0.8);
-          if (norm < 0.2)      spk += '\u2581';
-          else if (norm < 0.4) spk += '▂';
-          else if (norm < 0.6) spk += '▄';
-          else if (norm < 0.8) spk += '▅';
-          else                 spk += '▆';
-        }
-      }
-
-      out += ' ' +
-        W(pad(d.symbol, MC[0])) +
-        `{#00FFFF-fg}${pad(nameS, MC[1])}{/}` +
-        `{#00FF88-fg}{bold}${pad(priceS, MC[2])}{/}` +
-        pctTag + ' '.repeat(Math.max(1, MC[3] - pctStr.length)) +
-        WW(pad(volS,  MC[4])) +
-        WW(pad(mcapS, MC[5])) +
-        c + spk + '{/}\n';
-    });
-
-    mktBox.setContent(out);
-    mktBox.height = DATA.market.length + 5;
-  }
 
 
 
@@ -1461,511 +1306,7 @@ function startDashboard() {
     buildTokenTab(); tokScroll.setScrollPerc(0); screen.render();
   }
 
-  // ══════════════════════════════════════════════════════════
-  // F5  NEWS
-  // ══════════════════════════════════════════════════════════
-  const tabNews    = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  const newsScroll = mkScroll(tabNews, { top: 0, left: 0, right: 0, bottom: 0 });
-  const newsBox    = mkBox(newsScroll, { width: '100%-2' });
 
-  let newsLoading  = false;
-  let newsError    = null;
-
-  // Helpers
-  const relTime = (date) => {
-    const diffMs = Date.now() - (date instanceof Date ? date : new Date(date));
-    const s = Math.floor(diffMs / 1000);
-    if (s < 60)   return s + 's';
-    if (s < 3600) return Math.floor(s / 60) + 'm';
-    if (s < 86400) return Math.floor(s / 3600) + 'h';
-    return Math.floor(s / 86400) + 'd';
-  };
-
-  const sourceColor = (src) => {
-    const MAP = {
-      'COINTELEGRAPH': '#00AAFF',
-      'DECRYPT':       '#FF6B35',
-      'CRYPTOBRIEF':   '#AA00FF',
-      'BEINCRYPTO':    '#00CCAA',
-      'SOLANA.COM':    '#9945FF',
-    };
-    return MAP[src] || '#888888';
-  };
-
-  const tagColor = (tag) => {
-    const MAP = {
-      'SOLANA': '#9945FF',
-      'DEFI':   '#00AAAA',
-      'NFT':    '#FF6B6B',
-      'MARKET': '#FFD700',
-      'CRYPTO': '#888888',
-    };
-    return MAP[tag] || '#888888';
-  };
-
-  let newsSelected = 0; // currently highlighted item index
-
-  const { fetchArticleContent } = require('../api');
-
-  // ── Build modal content string ──────────────────────────────
-  function buildModalContent(item, fullText, loading) {
-    const srcClr  = sourceColor(item.source);
-    const tagClr  = tagColor(item.tag);
-    const dateStr = item.date instanceof Date
-      ? item.date.toLocaleString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' })
-      : String(item.date);
-
-    const W_LINE = 80;
-
-    let d = '';
-    d += `\n  {#00FFFF-fg}{bold}${'─'.repeat(W_LINE)}{/}\n`;
-    d += `  {#9945FF-fg}{bold}◈ ARTICLE READER{/}  {#333333-fg}│{/}  {${srcClr}-fg}${item.source}{/}  {${tagClr}-fg}[ ${item.tag} ]{/}      {#FF4444-bg}{white-fg}{bold} [ ESC ] TO CLOSE {/}\n`;
-    d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
-
-    // Title (natively wrapped by blessed)
-    d += `  {white-fg}{bold}${item.title || ''}{/}\n\n`;
-
-    // Meta
-    d += `  {white-fg}${dateStr}{/}`;
-    const prioClr = item.priority === 'high' ? '#FF6B6B' : item.priority === 'medium' ? '#FFD700' : '#666666';
-    d += `   {${prioClr}-fg}● ${(item.priority || 'low').toUpperCase()} PRIORITY{/}\n`;
-    d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
-
-    // Full content area
-    if (loading) {
-      d += `  {#FFAA00-fg}⟳ Fetching full article...{/}\n\n`;
-    }
-
-    if (fullText) {
-      d += `  {#00FF88-fg}{bold}FULL ARTICLE TEXT{/}\n`;
-      d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
-      const paras = fullText.split('\n\n');
-      for (const para of paras) {
-        if (para.trim().startsWith('•')) {
-          d += `  {#DDDDDD-fg}{bold}${para.trim()}{/}\n\n`;
-        } else {
-          d += `  {#EEEEEE-fg}${para.trim()}{/}\n\n`;
-        }
-      }
-    } else if (!loading) {
-      // RSS description fallback
-      const body = item.fullDesc || item.fullContent || item.snippet || '';
-      if (body) {
-        d += `  {#AAAAAA-fg}{bold}SUMMARY  {#555555-fg}(full text not available for this source){/}{/}\n`;
-        d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n\n`;
-        d += `  {#EEEEEE-fg}${body}{/}\n\n`;
-      }
-      d += `  {#333333-fg}${'─'.repeat(W_LINE)}{/}\n`;
-      d += `  {#445544-fg}ℹ  This source uses client-side rendering. Visit the link below to read the full article.{/}\n\n`;
-    }
-
-    d += `  {#00FFFF-fg}${'─'.repeat(W_LINE)}{/}\n`;
-    d += `  {#00FFFF-fg}{bold}LINK:{/}\n`;
-    d += `  {#00FF88-fg}${item.link}{/}\n\n`;
-    d += `  {#444444-fg}${'─'.repeat(W_LINE)}{/}\n`;
-    d += `  {white-fg}Press ESC or Q to close this article    ·    Navigate with ↑↓    ·    Copy link above to open in browser{/}\n\n`;
-    return d;
-  }
-
-  // ── News detail modal ─────────────────────────────────────
-  function showNewsDetail(item) {
-    if (!item) return;
-
-    const modal = blessed.box({
-      parent: screen,
-      top: '3%', left: '4%', width: '92%', height: '90%',
-      tags: true, scrollable: true, alwaysScroll: true, mouse: true,
-      keys: true,
-      style: { bg: '#000D0D', fg: 'white', border: { fg: '#00FFFF' } },
-      border: { type: 'line' },
-      scrollbar: { ch: '│', style: { fg: '#9945FF' } },
-      label: ` {#9945FF-fg}{bold} ◈ ARTICLE READER {/} `,
-    });
-
-    activeModal = modal;
-
-    // Immediately render with available RSS content
-    const hasFullRss = !!(item.fullContent && item.fullContent.length > 200);
-    modal.setContent(buildModalContent(item, hasFullRss ? item.fullContent : null, !hasFullRss));
-    modal.focus();
-    screen.render();
-
-    // Async-fetch full article if not already available from RSS
-    if (!hasFullRss) {
-      fetchArticleContent(item.link).then(fullText => {
-        if (fullText && fullText.length > 200) {
-          modal.setContent(buildModalContent(item, fullText, false));
-        } else {
-          modal.setContent(buildModalContent(item, null, false));
-        }
-        screen.render();
-      }).catch(() => {
-        modal.setContent(buildModalContent(item, null, false));
-        screen.render();
-      });
-    }
-  }
-
-  function buildNewsTab() {
-    const count  = DATA.news.length;
-    const solCnt = DATA.news.filter(n => n.tag === 'SOLANA').length;
-    if (newsSelected >= count) newsSelected = Math.max(0, count - 1);
-
-    let out = '';
-
-    // Status header
-    const statusDot = newsLoading ? `{#FFAA00-fg}⟳ LOADING{/}` : `{#00FF88-fg}● LIVE{/}`;
-    const lastStr   = DATA.newsLastUpdated
-      ? `{white-fg}Updated ${relTime(DATA.newsLastUpdated)} ago{/}`
-      : `{white-fg}Loading...{/}`;
-
-    out += OB(' TERMINAL NEWS');
-    out += `  ${statusDot}  {#00FFFF-fg}5 Sources{/}  {#9945FF-fg}${solCnt} Solana{/}  ${lastStr}`;
-    out += `  ${GRY('↑↓=navigate  Enter=open  R=refresh')}\n`;
-    out += HR(98) + '\n';
-
-    if (newsError) out += errorBanner(newsError) + '\n';
-
-    if (newsLoading && count === 0) {
-      if (!buildNewsTab._stopLoader) {
-        buildNewsTab._stopLoader = createAnimatedLoader(screen, newsBox,
-          'Aggregating news from 5 sources...',
-          ['Fetching CoinTelegraph RSS...', 'Fetching Decrypt RSS...', 'Fetching CryptoBrief RSS...', 'Fetching BeInCrypto RSS...', 'Fetching Solana.com news...', 'Sorting by recency...']);
-      }
-      newsBox.height = 14; return;
-    }
-    if (buildNewsTab._stopLoader) { buildNewsTab._stopLoader(); buildNewsTab._stopLoader = null; }
-    if (count === 0) {
-      out += `\n ${TL_BG('NO NEWS')}  ${WW('Press r to load news')}\n\n`;
-      newsBox.setContent(out); newsBox.height = 10; return;
-    }
-
-    // ─────────────────────── SOCIAL SENTIMENT SECTION ───────────────────────
-    if (DATA.tokenSocials && DATA.tokenSocials.length > 0) {
-      out += `\n ${TL_BG('SOCIAL SENTIMENT: X / TWITTER')}  ${WW('Auto-updating global Solana stream')}\n\n`;
-      DATA.tokenSocials.forEach((s, idx) => {
-        const timeStr = s.date.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
-        out += `  {#1DA1F2-fg}[${timeStr}] {/} ` + W(s.title.substring(0, 80)) + `\n`;
-        out += `  ${GRY('╰─ ' + s.source)}\n\n`;
-      });
-      out += HR(98) + '\n\n';
-    }
-
-    // Source summary bar
-    const sources = ['COINTELEGRAPH','DECRYPT','CRYPTOBRIEF','BEINCRYPTO','SOLANA.COM'];
-    out += '  ';
-    sources.forEach(s => {
-      const cnt = DATA.news.filter(n => n.source === s).length;
-      if (cnt > 0) {
-        const c = sourceColor(s);
-        out += `{${c}-fg}${s}{/} {white-fg}(${cnt}){/}   `;
-      }
-    });
-    out += '\n\n';
-
-    // Column headers
-    const C1=5, C2=14, C4=7;
-    out += '    ' + LBL(pad('AGE', C1)) + LBL(pad('SOURCE', C2)) + LBL(pad('TOPIC', C4)) + '  ' + LBL('HEADLINE') + '\n';
-    out += HR(98) + '\n';
-
-    // News items
-    DATA.news.forEach((n, idx) => {
-      const age     = relTime(n.date);
-      const isSel   = idx === newsSelected;
-      const src     = n.source || 'UNKNOWN';
-      const srcClr  = sourceColor(src);
-      const tag     = n.tag || '';
-      const tagClr  = tagColor(n.tag);
-
-      // Priority marker
-      const prio = n.priority === 'high'   ? `{#FF6B6B-fg}★{/}`
-                 : n.priority === 'medium' ? `{#FFD700-fg}◆{/}`
-                 :                           `{#444444-fg}·{/}`;
-
-      // Headline
-      const headline = (n.title || '').substring(0, 68);
-      const indent = ' '.repeat(4 + C1 + C2 + C4 + 2);
-
-      if (isSel) {
-        // Selected row: highlighted background, bright green headline
-        out += `{#001A2A-bg} →  ${GRY(pad(age, C1))}{${srcClr}-fg}${pad(src, C2)}{/}{${tagClr}-fg}${pad(tag, C4)}{/}  {#00FF88-fg}{bold}${headline}{/}{/}\n`;
-        if (n.snippet) {
-          out += `{#001A2A-bg}${indent}{#AAAAAA-fg}${n.snippet.substring(0, 64)}{/}{/}\n`;
-        }
-        out += `  {#00FFFF-fg}${'─'.repeat(96)}{/}\n`;
-      } else {
-        out += `  ${prio} ${GRY(pad(age, C1))}{${srcClr}-fg}${pad(src, C2)}{/}{${tagClr}-fg}${pad(tag, C4)}{/}  ${W(headline)}\n`;
-        if (n.snippet) {
-          out += `${indent}${GRY(n.snippet.substring(0, 64))}\n`;
-        }
-        out += `  {#112222-fg}${'─'.repeat(96)}{/}\n`;
-      }
-    });
-
-    newsBox.setContent(out);
-    newsBox.height = (DATA.news.length * 3) + 14 + (DATA.tokenSocials && DATA.tokenSocials.length ? 15 : 0);
-    
-    // Auto-scroll logic: ensures smooth scroll without clipping top items
-    if (newsSelected <= 2) {
-      newsScroll.setScrollPerc(0);
-    } else {
-      newsScroll.setScrollPerc((newsSelected / count) * 100);
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // F6  LIVE — Real-time on-chain trading terminal
-  // ══════════════════════════════════════════════════════════
-  const { fetchDexMovers, fetchTopSolanaTokens, fetchTrendingTokens, startLiveStream, fetchBitqueryWhales } = require('../api');
-
-  const tabLive = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-
-  // ── Header bar ──────────────────────────────────────────
-  const liveHeader = blessed.box({
-    parent: tabLive, top: 0, left: 0, right: 0, height: 1,
-    tags: true, style: { bg: '#001A0D', fg: 'white' },
-  });
-
-  // ── Stats bar (SOL / Slot / TPS / WSS status) ───────────
-  const liveStats = blessed.box({
-    parent: tabLive, top: 1, left: 0, right: 0, height: 3,
-    tags: true, border: { type: 'line' },
-    style: { bg: '#001A0D', fg: 'white', border: { fg: '#00FFFF' } },
-  });
-
-  // ── Swap Stream ─────────────────────────────────────────
-  const liveStreamBox = blessed.box({
-    parent: tabLive, top: 4, left: 0, right: 0, bottom: 0,
-    tags: true, border: { type: 'line' },
-    label: ' {#FFD700-fg}{bold}⚡ LIVE ON-CHAIN STREAM{/}  {white-fg}Raydium · Orca · Jupiter · Pump.fun{/} ',
-    style: { bg: '#000D0D', fg: 'white', border: { fg: '#FFD700' } },
-    scrollable: true, alwaysScroll: true, mouse: true,
-    scrollbar: { ch: '│', style: { fg: '#FFD700' } },
-  });
-
-
-  // ── Live state ──────────────────────────────────────────
-  let liveWssStatus   = 'CONNECTING';
-  let liveWssCount    = 0;  // events received
-  let liveSlot        = 0;
-  let liveTps         = 0;
-  let liveTrending    = [];
-  let liveDexMovers   = [];
-  let liveTopTokens   = [];
-  let liveStreamLines = []; // rolling buffer of events
-  let stopLiveWss     = null;
-
-  const MAX_STREAM_LINES = 200;
-
-  // Event type styles
-  const EV_STYLE = {
-    SWAP:   { clr: '#00FFFF', badge: '⇄ SWAP  ' },
-    BUY:    { clr: '#00FF88', badge: '▲ BUY   ' },
-    SELL:   { clr: '#FF6B6B', badge: '▼ SELL  ' },
-    WHALE:  { clr: '#FFD700', badge: '🐋 WHALE' },
-    STAKE:  { clr: '#CC99FF', badge: '⚑ STAKE ' },
-    NFT:    { clr: '#FF99BB', badge: '◈ NFT   ' },
-    TX:     { clr: '#AAAAAA', badge: '· TX    ' },
-    SYS:    { clr: '#999999', badge: '• SYS   ' },
-  };
-
-  function fmtEventTime(d) {
-    return d.toLocaleTimeString('en-US', { hour12: false });
-  }
-
-  function renderLiveHeader() {
-    const sol = DATA.market.find(m => m.symbol === 'SOL');
-    const price = sol ? `{#00FF88-fg}{bold}$${sol.price.toFixed(2)}{/}` : `{#AAAAAA-fg}...{/}`;
-    const pct   = sol ? (sol.pct >= 0 ? `{#00FF88-fg}+${sol.pct.toFixed(2)}%{/}` : `{#FF6B6B-fg}${sol.pct.toFixed(2)}%{/}`) : '';
-    const wssDot = liveWssStatus === 'CONNECTED'    ? `{#00FF88-fg}● LIVE WSS{/}` :
-                   liveWssStatus === 'ERROR'         ? `{#FF6B6B-fg}● ERROR{/}` :
-                   liveWssStatus === 'RECONNECTING'  ? `{#FF6B6B-fg}⟳ RECONNECTING{/}` :
-                   `{#FFAA00-fg}⟳ CONNECTING{/}`;
-    const evCnt = liveWssCount ? `{white-fg}  ${liveWssCount} events{/}` : '';
-    liveHeader.setContent(
-      ` {#9945FF-fg}{bold}◈ LIVE TRADING TERMINAL{/}   SOL: ${price} ${pct}   ${wssDot}${evCnt}  ` +
-      `{#AAAAAA-fg}Slot: ${liveSlot ? liveSlot.toLocaleString() : '...'}  TPS: ${liveTps || '...'}  mainnet-beta{/}`
-    );
-  }
-
-  function renderLiveStats() {
-    const sol = DATA.market.find(m => m.symbol === 'SOL');
-    const btc = DATA.market.find(m => m.symbol === 'BTC');
-    const eth = DATA.market.find(m => m.symbol === 'ETH');
-
-    function priceLine(asset) {
-      if (!asset) return `{#AAAAAA-fg}...{/}`;
-      const clr = asset.pct >= 0 ? '#00FF88' : '#FF6B6B';
-      const pctStr = (asset.pct >= 0 ? '+' : '') + asset.pct.toFixed(2) + '%';
-      const priceStr = asset.price >= 1000
-        ? asset.price.toLocaleString('en-US', {maximumFractionDigits:0})
-        : asset.price.toFixed(asset.price >= 1 ? 2 : 4);
-      return `{white-fg}{bold}${asset.symbol.padEnd(5)}{/} {${clr}-fg}{bold}$${priceStr}{/}  {${clr}-fg}${pctStr.padEnd(9)}{/}{#AAAAAA-fg}Vol: ${asset.vol}{/}`;
-    }
-
-    const tpsClr  = liveTps > 3000 ? '#00FF88' : liveTps > 1000 ? '#FFD700' : '#FF6B6B';
-    const slotStr = liveSlot ? `{#00FFFF-fg}${liveSlot.toLocaleString()}{/}` : `{white-fg}fetching...{/}`;
-
-    let out = '';
-    out += ` ${priceLine(sol)}    ${priceLine(btc)}    ${priceLine(eth)}  \n`;
-    out += ` {white-fg}Slot:{/} ${slotStr}  ` +
-           `{white-fg}TPS:{/} {${tpsClr}-fg}${liveTps || '...'}{/}  ` +
-           `{white-fg}Events Captured:{/} {#00FFFF-fg}${liveWssCount}{/}`;
-    liveStats.setContent(out);
-  }
-
-  function renderSwapStream() {
-    if (liveStreamLines.length === 0) {
-      liveStreamBox.setContent('\n  {#AAAAAA-fg}Connecting to on-chain stream...{/}');
-      return;
-    }
-    // Render the entire buffer so user can scroll back
-    const out = liveStreamLines.map(ev => {
-      const style  = EV_STYLE[ev.type] || EV_STYLE.TX;
-      const timeStr = fmtEventTime(ev.time);
-      const srcClr  = ev.source === 'Raydium'  ? '#FF8844' :
-                      ev.source === 'Orca'      ? '#00CCFF' :
-                      ev.source === 'Jupiter'   ? '#00FF88' :
-                      ev.source === 'Pump.fun'  ? '#FF66CC' : '#AAAAAA';
-      const badge   = `{${style.clr}-fg}{bold}${style.badge}{/}`;
-      const srcTag  = ev.source !== 'SYSTEM'
-        ? `{${srcClr}-fg}${ev.source.padEnd(9)}{/}`
-        : `{white-fg}SYSTEM   {/}`;
-      
-      const bracketIdx = ev.text.indexOf('[');
-      const mainText = bracketIdx > -1 ? ev.text.slice(0, bracketIdx) : ev.text;
-      const addrText = bracketIdx > -1 ? ev.text.slice(bracketIdx) : '';
-      return `  {#AAAAAA-fg}${timeStr}{/}  ${badge}${srcTag}  {white-fg}${mainText}{/}{#00FFFF-fg}${addrText}{/}`;
-    }).join('\n');
-
-    // Remember scroll state
-    const isAtBottom = liveStreamBox.getScrollPerc() >= 98 || liveStreamBox.getScrollPerc() === 0;
-    const prevScroll = liveStreamBox.getScroll();
-
-    liveStreamBox.setContent(out);
-
-    if (isAtBottom) {
-      liveStreamBox.setScrollPerc(100);
-    } else {
-      liveStreamBox.setScroll(prevScroll);
-    }
-  }
-
-  function renderLiveAll() {
-    renderLiveHeader();
-    renderLiveStats();
-    renderSwapStream();
-    screen.render();
-  }
-
-  // ── Push event to stream ────────────────────────────────
-  function pushLiveEvent(ev) {
-    liveStreamLines.push(ev);
-    if (liveStreamLines.length > MAX_STREAM_LINES) liveStreamLines.shift();
-    if (ev.type !== 'SYS') liveWssCount++;
-
-    // Update sidebar live feed too
-    const style = EV_STYLE[ev.type] || EV_STYLE.TX;
-    const srcClr = ev.source === 'Raydium' ? '#FF6B35' : ev.source === 'Orca' ? '#00CCFF' : '#00FFFF';
-    feedLog.log(`{white-fg}${fmtEventTime(ev.time)}{/}  {${style.clr}-fg}${style.badge.trim()}{/}  {white-fg}${ev.text.substring(0, 24)}{/}`);
-
-    if (current === 4) renderLiveAll(); // only render if tab is visible
-  }
-
-  // ── Slot + TPS poller (every 10s) ───────────────────────
-  let liveSlotInterval = null;
-
-  async function pollLiveStats() {
-    try {
-      const [epochInfo, perfSamples] = await Promise.allSettled([
-        require('../api').fetchEpochInfo().catch(() => null),
-        rpcCall('getRecentPerformanceSamples', [3]).catch(() => null),
-      ]);
-      if (epochInfo.status === 'fulfilled' && epochInfo.value) {
-        liveSlot = epochInfo.value.absoluteSlot || 0;
-      }
-      if (perfSamples.status === 'fulfilled' && Array.isArray(perfSamples.value) && perfSamples.value.length) {
-        const s = perfSamples.value[0];
-        liveTps = s.samplePeriodSecs > 0 ? Math.round(s.numTransactions / s.samplePeriodSecs) : 0;
-      }
-    } catch (e) {}
-    if (current === 4) renderLiveAll();
-  }
-
-  // ── High volume whale alerts poller ────────────────
-  let liveTrendInterval = null;
-
-  async function pollLiveBottom() {
-    const whales = await fetchBitqueryWhales().catch(() => []);
-    if (whales && whales.length) {
-      whales.forEach(ev => pushLiveEvent(ev));
-    }
-    if (current === 4) renderLiveAll();
-  }
-
-  // ── Boot the live engine (called once when Live tab first activated) ──
-  let liveBooted = false;
-
-  function bootLiveSection() {
-    if (liveBooted) return;
-    liveBooted = true;
-
-    // Start WebSocket stream
-    liveWssStatus = 'CONNECTING';
-    stopLiveWss = startLiveStream(ev => {
-      if (ev.type === 'SYS') {
-        if (ev.text.includes('connected')) liveWssStatus = 'CONNECTED';
-        else if (ev.text.includes('error') || ev.text.includes('Error')) liveWssStatus = 'ERROR';
-        else if (ev.text.includes('reconnecting')) liveWssStatus = 'RECONNECTING';
-      }
-      pushLiveEvent(ev);
-    });
-
-    // Initial data fetch
-    pollLiveStats();
-    pollLiveBottom();
-
-    // Set up polling intervals
-    liveSlotInterval   = setInterval(pollLiveStats,   10000);
-    liveTrendInterval  = setInterval(pollLiveBottom,  12000);
-
-    // Inject initial simulated events while stream loads
-    const INIT_MESSAGES = [
-      '⚡ Initializing on-chain event stream...',
-      'Subscribing to Raydium AMM program...',
-      'Subscribing to Orca Whirlpool program...',
-      'Subscribing to Jupiter Aggregator v6...',
-    ];
-    INIT_MESSAGES.forEach((msg, i) => {
-      setTimeout(() => pushLiveEvent({ type: 'SYS', source: 'SYSTEM', text: msg, time: new Date() }), i * 300);
-    });
-  }
-
-
-
-  // ══════════════════════════════════════════════════════════
-  // F7  ALERTS
-  // ══════════════════════════════════════════════════════════
-  const tabAlerts = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
-  const altScroll = mkScroll(tabAlerts, { top: 0, left: 0, right: 0, bottom: 0 });
-  const altBox    = mkBox(altScroll, { width: '100%-2' });
-
-  function buildAlertsTab() {
-    const fired  = DATA.alerts.filter(a => a.triggered).length;
-    const active = DATA.alerts.filter(a => !a.triggered).length;
-    let out = '';
-    out += OB(' SMART ALERTS') + `  ${WW('Configured price triggers')}\n`;
-    out += HR(86) + '\n\n';
-    out += ` ${WW('TOTAL: ')}${C(String(DATA.alerts.length))}     ${G('ACTIVE: ' + active)}     ${DN('TRIGGERED: ' + fired)}\n\n`;
-    out += ' ' + LBL(pad('ID', 9)) + LBL(pad('TOKEN', 8)) + LBL(pad('CONDITION', 26)) + LBL(pad('CREATED', 18)) + LBL(pad('STATUS', 12)) + LBL('FIRED AT') + '\n';
-    out += HR(82) + '\n';
-    DATA.alerts.forEach(a => {
-      const badge = a.status === 'ACTIVE' ? GRN_BG('ACTIVE') : RED_BG('FIRED');
-      out += ' ' + WW(pad(a.id, 9)) + W(pad(a.token, 8)) + WW(pad(a.condition, 26)) + WW(pad(a.created, 18)) + badge + '  ' + (a.triggeredAt ? DN(a.triggeredAt) : GRY('-')) + '\n';
-    });
-    altBox.setContent(out);
-    altBox.height = DATA.alerts.length + 10;
-  }
 
   // ══════════════════════════════════════════════════════════
   // F8  NETWORK
@@ -2178,14 +1519,14 @@ function startDashboard() {
     const aiStatus = blessed.box({
       parent: tabAI, bottom: 0, left: 0, width: '100%', height: 4,
       tags: true, style: { border: { fg: '#333333' } }, border: 'line',
-      content: ` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {white-fg}Powered by Groq Llama 3.3{/}\n ${W('Press "i" to ask the Solana Terminal AI a question...')}`
+      content: ` {#9945FF-fg}{bold}AI STATUS:{/} {#00FF88-fg}READY{/}  │  {white-fg}Powered by Groq Llama 3.3{/}\n ${W('Press "i" to ask the Solana TUI Explorer AI a question...')}`
     });
 
     let aiHistory = [];
 
     function buildAITab() {
       if (aiLog.getContent() === '') {
-        aiLog.setContent(`\n ${TL_BG(' SOLANA TERMINAL AI ')}  ${WW('Welcome to the high-frequency trading assistant.')}\n\n ${GRY('Ask about Solana market caps, network stats, or technical analysis.')}\n\n ${GRY('─────────────────────────────────────────────────────────────────────────────')}\n\n`);
+        aiLog.setContent(`\n ${TL_BG(' SOLANA TUI EXPLORER AI ')}  ${WW('Welcome to the Solana TUI Explorer AI assistant.')}\n\n ${GRY('Ask about Solana validator networks, accounts, tokens, or transaction errors.')}\n\n ${GRY('─────────────────────────────────────────────────────────────────────────────')}\n\n`);
       }
     }
 
@@ -2193,7 +1534,7 @@ function startDashboard() {
       if (!query) return;
       
       aiLog.setContent(aiLog.getContent() + ` {#00FFFF-fg}{bold}USER: ${query}{/}\n\n`);
-      aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#FFD700-fg}THINKING...{/}\n ${GRY('Crunching market data via Groq Llama-3.3...')}`);
+      aiStatus.setContent(` {#9945FF-fg}{bold}AI STATUS:{/} {#FFD700-fg}THINKING...{/}\n ${GRY('Analyzing query via Groq Llama-3.3...')}`);
       screen.render();
 
       try {
@@ -2388,25 +1729,322 @@ function startDashboard() {
       await loadExplorerList();
       buildExplorerTab(); screen.render();
     }
+
+    // ══════════════════════════════════════════════════════════
+    // F6  LITESVM LOCALHOST TESTING
+    // ══════════════════════════════════════════════════════════
+    const tabLocalTest = blessed.box({ parent: mainPane, width: '100%', height: '100%', hidden: true, tags: true, style: BOX });
+
+    // Left List Pane for transactions
+    localList = blessed.list({
+      parent: tabLocalTest,
+      top: 2,
+      left: 1,
+      width: '40%',
+      bottom: 1,
+      keys: true,
+      vi: true,
+      mouse: true,
+      interactive: true,
+      border: 'line',
+      label: ' {#00FF88-fg}{bold}LITESVM TRANSACTIONS{/} ',
+      tags: true,
+      style: {
+        border: { fg: '#00FF88' },
+        selected: { bg: '#00FF88', fg: 'black', bold: true },
+        item: { fg: 'white', bg: '#001A0D' }
+      }
+    });
+
+    // Right Details Pane scroll wrapper & text box
+    const localDetailScroll = mkScroll(tabLocalTest, {
+      top: 2,
+      right: 1,
+      width: '58%',
+      bottom: 1,
+      border: 'line',
+      style: { border: { fg: '#00FFFF' } },
+      label: ' {#00FFFF-fg}{bold}TRANSACTION LOGS & DETAILS{/} ',
+      tags: true,
+      keys: true,
+      vi: true,
+      mouse: true,
+      interactive: true
+    });
+    const localDetailBox = mkBox(localDetailScroll, { width: '100%-2' });
+
+    let localTransactions = [];
+    let localSelectedIdx = 0;
+
+    function findSessionPath() {
+      const fs = require('fs');
+      const path = require('path');
+      
+      let rawPath = CFG.LITESVM_SESSION_PATH;
+      if (process.platform === 'linux' && (rawPath.startsWith('\\\\') || rawPath.startsWith('//'))) {
+        let normalized = rawPath.replace(/\\/g, '/');
+        normalized = normalized.replace(/^\/\/wsl\.localhost\/[^\/]+/, '');
+        normalized = normalized.replace(/^\/\/wsl\$\/[^\/]+/, '');
+        rawPath = normalized;
+      }
+
+      let sessionPath = path.resolve(process.cwd(), rawPath);
+      if (fs.existsSync(sessionPath)) return sessionPath;
+
+      const parentPath = path.resolve(process.cwd(), '../litesvm-session.json');
+      if (fs.existsSync(parentPath)) return parentPath;
+
+      const grandPath = path.resolve(process.cwd(), '../../litesvm-session.json');
+      if (fs.existsSync(grandPath)) return grandPath;
+
+      try {
+        const parentDir = path.dirname(process.cwd());
+        const siblings = fs.readdirSync(parentDir);
+        for (const sibling of siblings) {
+          const siblingPath = path.resolve(parentDir, sibling, 'litesvm-session.json');
+          if (fs.existsSync(siblingPath)) {
+            return siblingPath;
+          }
+        }
+      } catch (e) {}
+
+      return sessionPath;
+    }
+
+    // Load data from litesvm-session.json
+    function loadLocalTestData() {
+      const fs = require('fs');
+      const sessionPath = findSessionPath();
+
+      if (!fs.existsSync(sessionPath)) {
+        localTransactions = [];
+        buildLocalTestTabEmpty();
+        return;
+      }
+
+      try {
+        const fileContent = fs.readFileSync(sessionPath, 'utf8');
+        const lines = fileContent.split('\n').filter(l => l.trim() !== '');
+        
+        localTransactions = lines.map(line => {
+          try {
+            return JSON.parse(line);
+          } catch (e) {
+            return null;
+          }
+        }).filter(t => t !== null);
+
+        buildLocalTestTabContent();
+      } catch (err) {
+        localTransactions = [];
+        localDetailBox.setContent(`\n ${RED_BG('ERROR')}  {#FF6B6B-fg}Failed to read session file: ${err.message}{/}\n`);
+        localDetailBox.height = 5;
+        screen.render();
+      }
+    }
+
+    function buildLocalTestTabEmpty() {
+      localList.hide();
+      localDetailScroll.hide();
+      
+      // Welcome helper pane
+      const helpBox = blessed.box({
+        parent: tabLocalTest,
+        top: 2,
+        left: 2,
+        right: 2,
+        bottom: 1,
+        tags: true,
+        style: BOX,
+        content: `\n ${TL_BG(' LITESVM LOCAL TESTING ')}  ${WW('Record and inspect in-memory Rust test transactions')}\n\n` +
+          ` ${C('Status:')} {#FF6B6B-fg}No session logs found at '${CFG.LITESVM_SESSION_PATH}'{/}\n\n` +
+          ` ${WW('LiteSVM executes entirely in-memory during tests, so transaction logs disappear when tests exit.')}\n` +
+          ` ${WW('To capture and view transactions here, wrap LiteSVM in your Rust test suite using our logger:')}\n\n` +
+          ` ${GRY('1. Copy our wrapper module into your test suite:')}\n` +
+          `    ${W('tests/litesvm_explorer.rs')}\n\n` +
+          ` ${GRY('2. Use the wrapper instead of LiteSVM directly in your tests:')}\n` +
+          `    {#00FF88-fg}#[test]\n` +
+          `    fn test_escrow() {\n` +
+          `        let mut svm = ExplorerLiteSVM::new(); // logs automatically\n` +
+          `        svm.send_transaction(tx).unwrap();\n` +
+          `    }{/}\n\n` +
+          ` ${GRY('3. Run your tests with:')}\n` +
+          `    ${W('cargo test')}\n\n` +
+          ` ${WW('This tab will automatically watch the session file and render transaction CPIs & logs in real-time!')}`
+      });
+      tabLocalTest._helpBox = helpBox;
+      screen.render();
+    }
+
+    function buildLocalTestTabContent() {
+      if (tabLocalTest._helpBox) {
+        tabLocalTest._helpBox.destroy();
+        delete tabLocalTest._helpBox;
+      }
+
+      localList.show();
+      localDetailScroll.show();
+
+      if (localTransactions.length === 0) {
+        localList.setItems([`  No transactions recorded yet  `]);
+        localDetailBox.setContent(`\n ${WW('Run cargo test in your project to see transaction details.')}\n`);
+        localDetailBox.height = 5;
+        screen.render();
+        return;
+      }
+
+      const items = localTransactions.map((tx, idx) => {
+        const statusIcon = tx.status === 'Success' ? '{#00FF88-fg}✓{/}' : '{#FF6B6B-fg}✗{/}';
+        const signatureShort = tx.signature.slice(0, 12) + '…' + tx.signature.signature || tx.signature.slice(-8);
+        const sigFinal = tx.signature.length > 20 ? (tx.signature.slice(0, 12) + '…' + tx.signature.slice(-8)) : tx.signature;
+        return `  ${statusIcon}  ${sigFinal}  ${GRY(new Date(tx.timestamp * 1000).toLocaleTimeString())}`;
+      });
+
+      localList.setItems(items);
+      
+      if (localSelectedIdx >= localTransactions.length) {
+        localSelectedIdx = localTransactions.length - 1;
+      }
+      localList.select(localSelectedIdx);
+      renderLocalDetail(localTransactions[localSelectedIdx]);
+      screen.render();
+    }
+
+    function renderLocalDetail(tx) {
+      if (!tx) {
+        localDetailBox.setContent('');
+        return;
+      }
+
+      const statusBg = tx.status === 'Success' ? GRN_BG(' SUCCESS ') : RED_BG(' FAILED ');
+      const timeStr = new Date(tx.timestamp * 1000).toLocaleString();
+
+      let out = '';
+      out += ` ${statusBg}  ${W(tx.signature)}\n`;
+      out += ` ${LBL('Execution Time:')} ${WW(timeStr)}\n`;
+      out += ` ${LBL('Compute Units:')} ${Y(tx.compute_units.toLocaleString())} CU\n`;
+      if (tx.error) {
+        out += ` ${LBL('Error Code:')}    {#FF6B6B-fg}{bold}${tx.error}{/}\n`;
+      }
+      out += HR(80) + '\n\n';
+
+      out += ` ${TL_BG(' PROGRAM EXECUTION LOGS ')}\n\n`;
+      if (tx.logs && tx.logs.length > 0) {
+        tx.logs.forEach(log => {
+          let color = '{white-fg}';
+          if (log.includes('failed')) color = '{#FF6B6B-fg}';
+          else if (log.includes('success')) color = '{#00FF88-fg}';
+          else if (log.includes('Instruction:')) color = '{#00FFFF-fg}{bold}';
+          
+          out += `  ${color}${log}{/}\n`;
+        });
+      } else {
+        out += `  ${GRY('(No program logs generated)')}\n`;
+      }
+
+      localDetailBox.setContent(out);
+      localDetailBox.height = out.split('\n').length + 5;
+      localDetailScroll.setScrollPerc(0);
+      screen.render();
+    }
+
+    localList.on('select item', (el, idx) => {
+      localSelectedIdx = idx;
+      if (localTransactions[idx]) {
+        renderLocalDetail(localTransactions[idx]);
+      }
+    });
+
+    // Toggle focus between Left and Right panes with Tab or Left/Right arrows
+    localList.key(['tab', 'right'], () => {
+      localDetailScroll.focus();
+    });
+
+    localDetailScroll.key(['tab', 'left'], () => {
+      localList.focus();
+    });
+
+    localList.on('click', () => {
+      localList.focus();
+    });
+
+    localDetailScroll.on('click', () => {
+      localDetailScroll.focus();
+    });
+
+    // Dynamic border highlight on focus for visual clarity
+    localList.on('focus', () => {
+      localList.style.border.fg = '#00FF88';
+      localList.setLabel(' {#00FF88-fg}{bold}LITESVM TRANSACTIONS{/} ');
+      localDetailScroll.style.border.fg = '#335555';
+      localDetailScroll.setLabel(' {#335555-fg}TRANSACTION LOGS & DETAILS{/} ');
+      screen.render();
+    });
+
+    localList.on('blur', () => {
+      localList.style.border.fg = '#224433';
+      localList.setLabel(' {#224433-fg}LITESVM TRANSACTIONS{/} ');
+      screen.render();
+    });
+
+    localDetailScroll.on('focus', () => {
+      localDetailScroll.style.border.fg = '#00FFFF';
+      localDetailScroll.setLabel(' {#00FFFF-fg}{bold}TRANSACTION LOGS & DETAILS{/} ');
+      localList.style.border.fg = '#224433';
+      localList.setLabel(' {#224433-fg}LITESVM TRANSACTIONS{/} ');
+      screen.render();
+    });
+
+    localDetailScroll.on('blur', () => {
+      localDetailScroll.style.border.fg = '#335555';
+      localDetailScroll.setLabel(' {#335555-fg}TRANSACTION LOGS & DETAILS{/} ');
+      screen.render();
+    });
+
+    let localInterval = null;
+    let lastMtime = 0;
+    let lastSize = 0;
+
+    function watchLocalSessionFile() {
+      const fs = require('fs');
+      
+      if (localInterval) return;
+
+      localInterval = setInterval(() => {
+        const sessionPath = findSessionPath();
+        if (fs.existsSync(sessionPath)) {
+          try {
+            const stat = fs.statSync(sessionPath);
+            const mtime = stat.mtimeMs;
+            const size = stat.size;
+            if (mtime !== lastMtime || size !== lastSize) {
+              lastMtime = mtime;
+              lastSize = size;
+              loadLocalTestData();
+            }
+          } catch (e) {}
+        } else {
+          if (lastSize !== 0) {
+            lastMtime = 0;
+            lastSize = 0;
+            loadLocalTestData();
+          }
+        }
+      }, 1000);
+    }
   
-    // ─────────────────────────────────────────────
-    // BOTTOM BARS
-    // ─────────────────────────────────────────────
     const hints = [
-      'DexScreener prices  │  30s auto-refresh  │  R=refresh now',
+      'Solana RPC stats  │  Validator World Map  │  R=refresh  │  30s auto-refresh',
       'I=enter wallet address  │  R=refresh  │  arrows=scroll',
       'I=enter token mint or symbol  │  R=refresh  │  arrows=scroll  │  T=change timeframe',
-      'Terminal news & signals  │  arrows=scroll',
-      'Live event stream  │  arrows=scroll',
-      'Smart alerts  │  R=refresh',
-      'Solana RPC stats  │  Validator World Map  │  R=refresh  │  30s auto-refresh',
-      'Ask the Solana Terminal AI assistant  │  I=ask a question',
-      'Blockchain deep-dive  │  I=inspect signature  │  R=refresh live feed'
+      'Ask the Solana Developer AI assistant  │  I=ask a question',
+      'Blockchain deep-dive  │  I=inspect signature  │  R=refresh live feed',
+      'LiteSVM session monitor  │  TAB/Arrows=switch pane  │  arrows/vi=scroll  │  R=refresh'
     ];
   const cmdBar = blessed.box({
     parent: root, bottom: 1, left: 0, width: '100%', height: 1,
     tags: true, style: BOX,
-    content: `{#00FFFF-fg}▶{/} {white-fg}Connecting to DexScreener and Solana RPC...{/}`,
+    content: `{#00FFFF-fg}▶{/} {white-fg}Connecting to Solana RPC...{/}`,
   });
   const footer = blessed.box({
     parent: root, bottom: 0, left: 0, width: '100%', height: 1,
@@ -2416,8 +2054,8 @@ function startDashboard() {
   // ─────────────────────────────────────────────
   // TAB MANAGEMENT
   // ─────────────────────────────────────────────
-  const allTabs    = [tabMarket, tabWallet, tabToken, tabNews, tabLive, tabAlerts, tabNetwork, tabAI, tabExplorer];
-  const allScrolls = [mktScroll, wltScroll, tokScroll, newsScroll, null, altScroll, netScroll, aiLog, expScroll];
+  const allTabs    = [tabNetwork, tabWallet, tabToken, tabAI, tabExplorer, tabLocalTest];
+  const allScrolls = [netScroll, wltScroll, tokScroll, aiLog, expScroll, localDetailScroll];
 
   function activateTab(idx) {
     current = idx;
@@ -2425,23 +2063,23 @@ function startDashboard() {
     activeScroll = allScrolls[idx] || null;
     if (activeScroll) activeScroll.setScrollPerc(0);
 
-    // Boot live section on first activation (LIVE = idx 4 = F5)
-    if (idx === 4) {
-      bootLiveSection();
-      renderLiveAll();
-    }
-
-    // Lazy-load validator geo data on first Network tab open (idx 6 = F7)
-    if (idx === 6 && validatorGeoData === null && !validatorGeoLoading) {
+    // Lazy-load validator geo data on first Network tab open (idx 0 = F1)
+    if (idx === 0 && validatorGeoData === null && !validatorGeoLoading) {
       loadValidatorGeoData();
       startHeartbeat();
     }
 
-    if (idx === 8 && !expTxQuery && (!DATA.explorer.list || DATA.explorer.list.length === 0)) {
+    if (idx === 4 && !expTxQuery && (!DATA.explorer.list || DATA.explorer.list.length === 0)) {
        refreshExplorerList();
     }
 
-    const names = ['MARKET','WALLET','TOKEN','NEWS','LIVE','ALERTS','NETWORK', 'ASK AI', 'EXPLORER'];
+    if (idx === 5) {
+      loadLocalTestData();
+      watchLocalSessionFile();
+      localList.focus();
+    }
+
+    const names = ['NETWORK', 'ACCOUNT', 'TOKEN', 'ASK AI', 'EXPLORER', 'LITESVM'];
     let nav = '';
     names.forEach((n, i) => {
       nav += i === idx
@@ -2451,7 +2089,7 @@ function startDashboard() {
     navContent.setContent(nav);
 
     const fLine = names.map((n, i) => `{#00FFFF-fg}{bold}F${i+1}{/} {white-fg}${n}{/}`).join('  ');
-    footer.setContent(` {white-fg}${fLine}    I=input  R=refresh  ↑↓=scroll  ESC=quit   SOLANA TERMINAL{/}`);
+    footer.setContent(` {white-fg}${fLine}    I=input  R=refresh  ↑↓=scroll  ESC=quit   SOLANA DEV EXPLORER{/}`);
     cmdBar.setContent(`{#00FFFF-fg}▶{/} {white-fg}${hints[idx] || ''}{/}`);
     screen.render();
   }
@@ -2462,9 +2100,6 @@ function startDashboard() {
   screen.key(['f4'], () => activateTab(3));
   screen.key(['f5'], () => activateTab(4));
   screen.key(['f6'], () => activateTab(5));
-  screen.key(['f7'], () => activateTab(6));
-  screen.key(['f8'], () => activateTab(7));
-  screen.key(['f9'], () => activateTab(8));
   screen.key(['escape', 'q', 'Q', 'C-c'], (ch, key) => {
     if (key && key.name === 'c' && key.ctrl) return process.exit(0);
     if (activeModal) {
@@ -2485,11 +2120,11 @@ function startDashboard() {
       getLineInput(screen, 'Enter token mint address or symbol (e.g. BONK / WIF / JUP):', val => {
         if (val) loadToken(val); else buildTokenTab(); screen.render();
       });
-    } else if (current === 7) { // AI tab
-      getLineInput(screen, 'ASK SOLANA TERMINAL AI:', query => {
+    } else if (current === 3) { // AI tab
+      getLineInput(screen, 'ASK SOLANA DEV AI:', query => {
         if (query) handleAIQuery(query);
       });
-    } else if (current === 8) { // Explorer tab
+    } else if (current === 4) { // Explorer tab
       getLineInput(screen, 'Enter Transaction Signature to inspect (base58):', sig => {
         if (sig) loadExplorerDetails(sig); else refreshExplorerList();
       });
@@ -2497,13 +2132,12 @@ function startDashboard() {
   });
 
   screen.key(['r', 'R'], () => {
-    if (current === 0) refreshMarket();
+    if (current === 0) refreshNetwork();
     else if (current === 1 && walletAddr) loadWallet(walletAddr);
     else if (current === 2 && tokenQuery) loadToken(tokenQuery);
-    else if (current === 3) refreshNews();
-    else if (current === 6) refreshNetwork();
-    else if (current === 7) buildAITab();
-    else if (current === 8) { if (expTxQuery) loadExplorerDetails(expTxQuery); else refreshExplorerList(); }
+    else if (current === 3) buildAITab();
+    else if (current === 4) { if (expTxQuery) loadExplorerDetails(expTxQuery); else refreshExplorerList(); }
+    else if (current === 5) loadLocalTestData();
   });
 
   screen.key(['t', 'T'], () => {
@@ -2519,47 +2153,8 @@ function startDashboard() {
   });
 
   // ─────────────────────────────────────────────
-  // LIVE FEED — sidebar seed (real stream fills this)
-  // ─────────────────────────────────────────────
-  // Seed the sidebar with a few stub entries on startup
-  DATA.liveFeed.slice(0, 3).forEach(e => {
-    const col = e.type === 'WHALE' ? '#FFD700-fg' : e.type === 'SWAP' ? '#00FFFF-fg' : '#00FF88-fg';
-    feedLog.log(`{white-fg}${nowTime()}{/}  {${col}}${e.type.padEnd(5)}{/}  {white-fg}${e.text.substring(0, 22)}{/}`);
-  });
-
-  // ─────────────────────────────────────────────
   // DATA LOADERS
   // ─────────────────────────────────────────────
-  async function refreshNews() {
-    if (newsLoading) return;
-    if (buildNewsTab._stopLoader) { buildNewsTab._stopLoader(); buildNewsTab._stopLoader = null; }
-    newsLoading = true; newsError = null;
-    buildNewsTab(); screen.render();
-    try {
-      await loadNewsData();
-      newsLoading = false;
-    } catch (e) {
-      newsLoading = false;
-      newsError = e.message.substring(0, 80);
-    }
-    if (buildNewsTab._stopLoader) { buildNewsTab._stopLoader(); buildNewsTab._stopLoader = null; }
-    buildNewsTab(); newsScroll.setScrollPerc(0); screen.render();
-  }
-
-  async function refreshMarket() {
-    try {
-      await loadMarketData();
-      refreshTicker(); buildMarketTable(); buildStatsRow();
-      buildGainers(); buildLosers(); buildMacroRow();
-      // Update live header if live section is active
-      if (liveBooted) { renderLiveHeader(); renderLiveStats(); }
-    } catch (e) {
-      mktBox.setContent(errorBanner('Market data: ' + e.message.substring(0, 60)));
-      mktBox.height = 10;
-    }
-    screen.render();
-  }
-
   async function refreshNetwork(isSilent = false) {
     // If we already have data, refresh silently (no spinner, old data stays)
     const showSpinner = !netHasData && !isSilent;
@@ -2584,8 +2179,7 @@ function startDashboard() {
   // BOOT SEQUENCE
   // ─────────────────────────────────────────────
   activateTab(0);
-  buildNewsTab(); buildAlertsTab();
-  buildMarketTable(); buildStatsRow(); buildMacroRow(); buildNetworkTab();
+  buildNetworkTab();
   buildWalletTab(); buildTokenTab(); buildAITab();
   
   // 15-minute silent resync of geo+schedule data (keeps heartbeat in sync with chain)
@@ -2595,18 +2189,11 @@ function startDashboard() {
     }
   }, 15 * 60 * 1000); // 15 minutes
 
-  setInterval(() => {
-    if (current === 3 && !newsLoading && !activeModal) buildNewsTab();
-    screen.render();
-  }, 30000);
-
   screen.render();
 
   // Initial data loads
-  Promise.all([refreshMarket(), refreshNetwork(), refreshNews()]).then(() => screen.render());
-  setInterval(refreshMarket,  CFG.MARKET_REFRESH_MS);
+  Promise.all([refreshNetwork()]).then(() => screen.render());
   setInterval(refreshNetwork, CFG.NETWORK_REFRESH_MS);
-  setInterval(refreshNews,    90000); // News refresh every 90s
 }
 
 module.exports = { startDashboard };

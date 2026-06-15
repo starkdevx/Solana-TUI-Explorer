@@ -1,7 +1,7 @@
 {
-  "name": "solana-terminal-proxy",
+  "name": "solana-tui-explorer-proxy",
   "version": "1.0.0",
-  "description": "Secure proxy server for Solana Bloomberg Terminal API keys",
+  "description": "Secure proxy server for Solana TUI Explorer API keys",
   "main": "proxy.js",
   "scripts": {
     "start": "node proxy.js"

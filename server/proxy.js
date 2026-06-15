@@ -20,7 +20,7 @@ app.post('/api/ai', async (req, res) => {
       messages: [
         {
           role: 'system',
-          content: 'You are the built-in AI assistant for the Solana Bloomberg Terminal. Provide highly concise, accurate, and professional answers for Solana developers and traders. Never use markdown headers, keep it raw text for CLI.'
+          content: 'You are the built-in AI assistant for the Solana TUI Explorer. Provide highly concise, accurate, and professional answers for Solana developers. Never use markdown headers, keep it raw text for CLI.'
         },
         { role: 'user', content: message }
       ],
@@ -48,7 +48,7 @@ app.get('/api/rpc-proxy', async (req, res) => {
 
 // Basic health check
 app.get('/', (req, res) => {
-  res.send('Solana Terminal Proxy Server is running safely.');
+  res.send('Solana TUI Explorer Proxy Server is running safely.');
 });
 
 const PORT = process.env.PORT || 3000;

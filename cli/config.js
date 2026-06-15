@@ -1,5 +1,5 @@
 // =============================================
-// SOLANA TERMINAL CLI — Config
+// SOLANA TUI EXPLORER CLI — Config
 // =============================================
 
 module.exports = {
@@ -29,7 +29,7 @@ module.exports = {
   PROXY_URL: process.env.PROXY_URL || 'http://100.26.192.172:3000',
   
   AI_MODEL: 'llama-3.3-70b-versatile',
-  AI_SYSTEM_PROMPT: 'You are the Antigravity Solana Terminal AI, a high-frequency trading assistant. Your responses must be concise, technical, and formatted for a terminal (no markdown headers, use plain text with accents). Focus on Solana ecosystem intelligence.',
+  AI_SYSTEM_PROMPT: 'You are the Antigravity Solana Developer TUI AI. You act as an expert Solana systems developer, smart contract compiler, and transaction debugger. Help developers diagnose RPC simulation failures, decode hexadecimal transaction instruction error codes, explain Anchor constraints, and optimize compute units. Your responses must be concise, technical, and formatted for a terminal (no markdown headers, use plain text with accents).',
   FAIRSCALE_API_KEY: process.env.FAIRSCALE_API_KEY || '',
 
   // Major cryptos — fetched from CoinDesk (accurate spot prices in USD)
@@ -81,4 +81,7 @@ module.exports = {
   NETWORK_REFRESH_MS: 30000,
   TOKEN_REFRESH_MS:   30000,
   WALLET_REFRESH_MS:  60000,
+
+  // Local testing session path
+  LITESVM_SESSION_PATH: process.env.LITESVM_SESSION_PATH || 'litesvm-session.json',
 };

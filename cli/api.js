@@ -1,5 +1,5 @@
 // =============================================
-// SOLANA TERMINAL CLI — API Layer
+// SOLANA TUI EXPLORER CLI — API Layer
 //   • CoinDesk Data API — BTC, ETH, SOL (accurate spot prices)
 //   • DexScreener       — Solana-native tokens
 //   • Solana public RPC — network stats and wallet data
@@ -16,7 +16,7 @@ function httpsGet(url, customHeaders = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
-        'User-Agent': 'SolanaTerminal/1.0',
+        'User-Agent': 'SolanaTUIExplorer/1.0',
         'Accept':     'application/json',
         ...customHeaders
       },
@@ -54,7 +54,7 @@ function rpcCall(method, params = []) {
       headers:  {
         'Content-Type':   'application/json',
         'Content-Length': Buffer.byteLength(body),
-        'User-Agent':     'SolanaTerminal/1.0',
+        'User-Agent':     'SolanaTUIExplorer/1.0',
       },
       timeout: 15000,
     };
@@ -89,7 +89,7 @@ function rpcCallExplorer(method, params = []) {
       headers:  {
         'Content-Type':   'application/json',
         'Content-Length': Buffer.byteLength(body),
-        'User-Agent':     'SolanaTerminal/1.0',
+        'User-Agent':     'SolanaTUIExplorer/1.0',
       },
       timeout: 15000,
     };
@@ -168,7 +168,7 @@ async function fetchCoinDeskPrices(symbols) {
   const url = `${COINDESK_BASE}/spot/v1/latest/tick?market=${COINDESK_MARKET}&instruments=${instruments}&apply_mapping=true`;
 
   const headers = {
-    'User-Agent': 'SolanaTerminal/1.0',
+    'User-Agent': 'SolanaTUIExplorer/1.0',
     'Accept':     'application/json',
   };
   if (COINDESK_API_KEY) headers['Coindesk-Api-Key'] = COINDESK_API_KEY;
@@ -925,7 +925,7 @@ function httpsGetRaw(url, attempt = 0) {
     const req = https.get({
       hostname: u.hostname,
       path: u.pathname + u.search,
-      headers: { 'User-Agent': 'SolanaTerminal/1.0', 'Accept': '*/*' },
+      headers: { 'User-Agent': 'SolanaTUIExplorer/1.0', 'Accept': '*/*' },
       timeout: 12000,
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && attempt < 3) {
@@ -1071,7 +1071,7 @@ async function fetchTrendingTokens() {
   try {
     const data = await new Promise((resolve, reject) => {
       https.get('https://api.coingecko.com/api/v3/search/trending', {
-        headers: { 'User-Agent': 'SolanaTerminal/1.0', 'Accept': 'application/json' },
+        headers: { 'User-Agent': 'SolanaTUIExplorer/1.0', 'Accept': 'application/json' },
         timeout: 8000,
       }, (res) => {
         let raw = '';
@@ -1298,7 +1298,7 @@ async function fetchBitqueryWhales() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${BITQUERY_API_KEY}`,
           'X-API-KEY': BITQUERY_API_KEY,
-          'User-Agent': 'SolanaTerminal/1.0'
+           'User-Agent': 'SolanaTUIExplorer/1.0'
         },
         timeout: 8000,
       }, (res) => {

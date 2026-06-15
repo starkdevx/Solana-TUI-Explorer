@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solana Prediction Market Competitive Landscape</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a31;
+      --panel-2: #18223f;
+      --text: #eef2ff;
+      --muted: #b3bddb;
+      --accent: #63e6be;
+      --warn: #ffd166;
+      --danger: #ff7b7b;
+      --border: #2b3760;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(180deg, var(--bg), #0f1730 45%, #10182d);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    h1, h2, h3 { margin: 0 0 12px; }
+    p { margin: 0 0 12px; color: var(--muted); }
+    .card {
+      background: rgba(18, 26, 49, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 18px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 8px;
+      margin-bottom: 8px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+    }
+    .good { color: var(--accent); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--danger); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--text); }
+    td { color: var(--muted); }
+    a { color: var(--accent); }
+    ul { margin: 0; padding-left: 18px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>Solana Prediction Market Competitive Landscape</h1>
+      <p>Generated on 2026-04-22 for a fresh prediction market idea on Solana.</p>
+      <div>
+        <span class="pill">Crowdedness: Crowded</span>
+        <span class="pill">Moat: Distribution + liquidity + trust</span>
+        <span class="pill">Best opening: verticalized or private markets</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Direct Competitors</h2>
+        <ul>
+          <li><strong>Drift BET</strong>: native Solana prediction market embedded in Drift's trading stack.</li>
+          <li><strong>MetaDAO</strong>: futarchy markets for governance and launch decisions, not general retail prediction.</li>
+          <li><strong>Hedgehog</strong>: long-running Solana prediction-market brand with broad-market positioning.</li>
+          <li><strong>TBD</strong>: new Solana protocol focused on verified human opinion using World ID.</li>
+          <li><strong>Kalshi via Phantom/DFlow</strong>: not natively on-chain matching, but distributed to Solana wallets as SPL positions.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Substitutes</h2>
+        <ul>
+          <li><strong>Polymarket</strong>: category leader, strong mindshare, deep liquidity, not on Solana.</li>
+          <li><strong>Kalshi / Robinhood</strong>: regulated event contracts for U.S. users.</li>
+          <li><strong>SX Bet / other betting apps</strong>: adjacent outcome markets for sports and events.</li>
+          <li><strong>Off-chain polling and research tools</strong>: surveys, Discord voting, governance forums.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Dead or Weak Signals</h2>
+        <ul>
+          <li>Many public Solana prediction-market repos exist, but most appear to be demos, hackathon projects, or low-traction forks.</li>
+          <li>Older generalized consumer prediction markets on Solana did not become clear category winners.</li>
+          <li>This suggests distribution and liquidity, not contract design alone, are the hard parts.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Matrix</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Status</th>
+            <th>User</th>
+            <th>Strength</th>
+            <th>Weakness</th>
+            <th>Threat</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Drift BET</td>
+            <td>Live / integrated</td>
+            <td>Active crypto traders</td>
+            <td>Existing liquidity, pro trading UX, capital efficiency</td>
+            <td>Feels trader-centric, not mass-market or creator-native</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td>MetaDAO</td>
+            <td>Live</td>
+            <td>DAOs, launches, governance-heavy communities</td>
+            <td>Distinct futarchy niche and real on-chain usage</td>
+            <td>Narrower than a general prediction app</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>Hedgehog</td>
+            <td>Live / evolving</td>
+            <td>General prediction-market users</td>
+            <td>Brand history on Solana, prediction-specific focus</td>
+            <td>Less visible distribution than Phantom or Drift</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>TBD</td>
+            <td>Newly public</td>
+            <td>Opinion markets, research, consumer sentiment</td>
+            <td>Human-verification angle, clear differentiation</td>
+            <td>Still early, needs durable liquidity and retention</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>Kalshi via Phantom</td>
+            <td>Live</td>
+            <td>Phantom users, mainstream retail, U.S.-eligible users</td>
+            <td>Regulatory trust plus wallet distribution</td>
+            <td>Provider-controlled resolution and regional limits</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td>Polymarket</td>
+            <td>Live</td>
+            <td>All prediction-market traders</td>
+            <td>Mindshare, liquidity, category default</td>
+            <td>Not Solana-native</td>
+            <td>High</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Takeaways</h2>
+      <ul>
+        <li>The space is <strong>not empty</strong>. Multiple teams have already built on Solana, and at least four live approaches exist today.</li>
+        <li>The real wedge is probably <strong>not</strong> "a generic Polymarket on Solana". That lane is already contested.</li>
+        <li>The strongest defensible angles look like private markets, creator-led markets, governance/futarchy, or opinion markets with identity/reputation data.</li>
+        <li>The primary moat is not smart contracts. It is distribution, trustworthy resolution, and sustained liquidity.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
