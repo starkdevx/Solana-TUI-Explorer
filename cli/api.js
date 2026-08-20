@@ -331,10 +331,17 @@ async function fetchMarketData() {
     fetchSparklines()
   ]);
 
-  const cdMarket  = coinDeskData.status  === 'fulfilled' ? coinDeskData.value  : [];
+  let cdMarket  = coinDeskData.status  === 'fulfilled' ? coinDeskData.value  : [];
+  if (!cdMarket.length) {
+    try {
+      cdMarket = await fetchDexTokenPrices(COINDESK_SYMBOLS);
+    } catch (e) {
+      console.warn('[api] DexScreener fallback failed for major coins:', e.message);
+    }
+  }
   const dexMarket = dexData.status       === 'fulfilled' ? dexData.value       : [];
 
-  if (!cdMarket.length) console.warn('[api] CoinDesk fetch failed; SOL/BTC/ETH prices may be missing');
+  if (!cdMarket.length) console.warn('[api] CoinDesk & fallback fetch failed; SOL/BTC/ETH prices may be missing');
   if (!dexMarket.length) console.warn('[api] DexScreener fetch failed; token prices may be missing');
 
   // Merge: CoinDesk coins first, then DexScreener tokens, in MARKET_SYMBOLS order
