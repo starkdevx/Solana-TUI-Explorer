@@ -1,7 +1,4 @@
-# Secure your private files
 .env
+.env*
 geo_cache.json
-*.pem
-*.key
-node_modules/
-.DS_Store
+*.log
