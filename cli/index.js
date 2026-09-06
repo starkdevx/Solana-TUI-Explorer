@@ -13,8 +13,8 @@ const { renderToken } = require('./panels/token');
 const { startDashboard } = require('./panels/dashboard');
 
 program
-  .name('st')
-  .description(chalk.hex('#00FF88').bold('Solana TUI Explorer (ST) — On-Chain Developer TUI for Solana'))
+  .name('sol-tui')
+  .description(chalk.hex('#00FF88').bold('Solana TUI Explorer — On-Chain Developer TUI for Solana'))
   .version('1.0.0');
 
 // Dashboard command (Full layout)
@@ -35,7 +35,7 @@ program.hook('preAction', (thisCommand, actionCommand) => {
   console.log(chalk.hex('#00FF88')('==========================================================='));
 });
 
-// st wallet <ADDRESS>
+// sol-tui wallet <ADDRESS>
 program
   .command('wallet [address]')
   .alias('w')
@@ -44,7 +44,7 @@ program
     renderWallet(address);
   });
 
-// st token <SYMBOL>
+// sol-tui token <SYMBOL>
 program
   .command('token [symbol]')
   .alias('t')

@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "bin": {
-    "solana-tui-explorer": "./bin/st.js",
-    "st": "./bin/st.js"
+    "solana-tui-explorer": "bin/st.js",
+    "sol-tui": "bin/st.js"
   },
   "files": [
     "bin",
