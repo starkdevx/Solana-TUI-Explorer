@@ -3,7 +3,24 @@
   "version": "1.0.0",
   "main": "index.js",
   "bin": {
-    "solana-tui-explorer": "./bin/st.js"
+    "solana-tui-explorer": "./bin/st.js",
+    "st": "./bin/st.js"
+  },
+  "files": [
+    "bin",
+    "panels",
+    "api.js",
+    "config.js",
+    "data.js",
+    "index.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/starkdevx/Solana-TUI-Explorer.git"
+  },
+  "homepage": "https://github.com/starkdevx/Solana-TUI-Explorer#readme",
+  "bugs": {
+    "url": "https://github.com/starkdevx/Solana-TUI-Explorer/issues"
   },
   "scripts": {
     "start": "node ./bin/st.js",
