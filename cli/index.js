@@ -15,7 +15,7 @@ const { startDashboard } = require('./panels/dashboard');
 program
   .name('sol-tui')
   .description(chalk.hex('#00FF88').bold('Solana TUI Explorer — On-Chain Developer TUI for Solana'))
-  .version('1.0.0');
+  .version('1.0.1');
 
 // Dashboard command (Full layout)
 program

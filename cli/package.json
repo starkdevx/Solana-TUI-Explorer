@@ -12,7 +12,8 @@
     "api.js",
     "config.js",
     "data.js",
-    "index.js"
+    "index.js",
+    "README.md"
   ],
   "repository": {
     "type": "git",
